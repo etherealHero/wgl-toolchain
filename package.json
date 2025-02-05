@@ -12,24 +12,18 @@
     "vscode": "^1.74.0"
   },
   "categories": ["Other"],
-  "activationEvents": [],
+  "activationEvents": ["onLanguage:javascript"],
   "main": "./out/extension.js",
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "build:parser": "peggy src/compiler/parser.pegjs --format es --dts",
+    "compile": "npm run build:parser && tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "vscode-test",
     "format": "npx @biomejs/biome check --write"
   },
-  "contributes": {
-    "commands": [
-      {
-        "command": "extension.helloWorld",
-        "title": "Hello World"
-      }
-    ]
-  },
+  "contributes": {},
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/mocha": "^10.0.1",
@@ -38,6 +32,11 @@
     "@vscode/test-cli": "^0.0.8",
     "@vscode/test-electron": "^2.3.9",
     "mocha": "^10.2.0",
+    "peggy": "^4.2.0",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "@typescript/vfs": "^1.6.0",
+    "source-map": "^0.7.4"
   }
 }

@@ -7,7 +7,13 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "ignore": ["node_modules", "src/**/wglparser.js", "src/**/wglparser.d.ts", ".artifacts"]
+    "ignore": [
+      "node_modules",
+      ".vscode-test",
+      "out",
+      "src/compiler/parser.js",
+      "src/compiler/parser.d.ts"
+    ]
   },
   "formatter": {
     "enabled": true,
