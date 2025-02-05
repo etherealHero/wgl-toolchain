@@ -23,7 +23,26 @@
     "test": "vscode-test",
     "format": "npx @biomejs/biome check --write"
   },
-  "contributes": {},
+  "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "WGLScript",
+      "properties": {
+        "wglscript.globalscript.enable": {
+          "type": "boolean",
+          "scope": "resource",
+          "default": "true",
+          "description": "Enable global script module"
+        },
+        "wglscript.globalscript.path": {
+          "type": "string",
+          "scope": "resource",
+          "default": "Lib/AppGlobalScript.js",
+          "description": "Global script module absolute path of wglscript project e.g. 'Lib/AppGlobalScript.js'"
+        }
+      }
+    }
+  },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/mocha": "^10.0.1",

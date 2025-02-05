@@ -1,6 +1,6 @@
 import * as assert from 'assert'
 import { transpileCallExpressionAssignment } from '../../compiler/compiler'
-import { normilizePath } from '../../compiler/utils'
+import { normalizePath } from '../../compiler/utils'
 
 suite('transpile call expression assignment', () => {
   test('with comment', () => {
@@ -18,11 +18,11 @@ suite('transpile call expression assignment', () => {
   })
 })
 
-suite('normilizePath - get absolute path from project root', () => {
+suite('normalizePath - get absolute path from project root', () => {
   test('file path has project root path and extension', () => {
-    assert.equal(normilizePath('/a/b.js', '/a'), 'b.js')
+    assert.equal(normalizePath('/a/b.js', '/a'), 'b.js')
   })
   test('file path has project root path without extension', () => {
-    assert.equal(normilizePath('/a/b', '/a'), 'b')
+    assert.equal(normalizePath('/a/b', '/a'), 'b')
   })
 })

@@ -1,10 +1,14 @@
 import * as path from 'path'
 import { SourceNode } from 'source-map'
-import * as vscode from 'vscode'
 import * as parser from './parser.js'
-import { normilizePath } from './utils.js'
+import {
+  type CompileOptions,
+  normalizePath,
+  parseGlobalScript,
+  parseScriptModule
+} from './utils.js'
 
-type AST<T extends Node> = T[]
+export type AST<T extends Node> = T[]
 type NodeType =
   | 'region'
   | 'regionLine'
@@ -66,11 +70,6 @@ export interface RegionLineNode extends Node {
 
 export type TNode = Node | ImportNode | RegionNode
 
-interface CompileOptions {
-  projectRoot: string
-  modules: string[]
-}
-
 function transpileRegionBrackets(code: string) {
   if (code.replace(/#text/g, '').trim() === '') return code.replace(/#text(\n|\r\n)/g, '`')
   if (code.replace(/#endtext/g, '').trim() === '') return code.replace(/#endtext/g, '`;')
@@ -94,15 +93,27 @@ export function transpileCallExpressionAssignment(code: string) {
  * @param opt compiler options
  */
 export async function compile(targetFile: string, opt: CompileOptions): Promise<SourceNode> {
-  const targetFileNormilized = normilizePath(targetFile, opt.projectRoot)
-  const readData = await vscode.workspace.fs.readFile(vscode.Uri.file(targetFile))
-  const targetFileContent = Buffer.from(readData).toString('utf8')
-  const ast: AST<TNode> = parser.parse(targetFileContent)
-  opt.modules.push(targetFileNormilized.toLowerCase())
+  let startTime = 0
+  let endTime = 0
+  if (opt.log === undefined) opt.log = {}
+
+  const targetFileNormalized = normalizePath(targetFile, opt.projectRoot)
+  startTime = performance.now()
+  const ast: AST<TNode> = await parseScriptModule(targetFile, opt.projectRoot)
+  endTime = performance.now()
+  if (opt.log.parseTime === undefined) opt.log.parseTime = 0
+  opt.log.parseTime += endTime - startTime
+  opt.modules.push(targetFileNormalized.toLowerCase())
 
   if (ast.at(-1)?.type === 'breakLine') ast.pop() // remove EOF
 
   const chunks: Array<string | SourceNode> = []
+
+  startTime = performance.now()
+  await parseGlobalScript(targetFile, opt, chunks)
+  endTime = performance.now()
+  if (opt.log.compileGlobalScriptTime === undefined) opt.log.compileGlobalScriptTime = 0
+  opt.log.compileGlobalScriptTime += endTime - startTime
 
   for (const n of ast) {
     if (n.type === 'moduleResolution') {
@@ -114,22 +125,22 @@ export async function compile(targetFile: string, opt: CompileOptions): Promise<
       // absolute
       else moduleFile = path.join(`${opt.projectRoot}/${href}`)
 
-      const moduleFileNormilized = normilizePath(moduleFile, opt.projectRoot)
-      if (opt.modules.indexOf(moduleFileNormilized.toLowerCase()) !== -1) {
+      const moduleFileNormalized = normalizePath(moduleFile, opt.projectRoot)
+      if (opt.modules.indexOf(moduleFileNormalized.toLowerCase()) !== -1) {
         chunks.push(
           new SourceNode(
             n.location.start.line,
             n.location.start.column - 1,
-            targetFileNormilized,
-            `/* @@unresolved ${moduleFileNormilized} from ${targetFileNormilized} */\n`
+            targetFileNormalized,
+            `/* @@unresolved ${moduleFileNormalized} from ${targetFileNormalized} */\n`
           )
         )
         continue
       }
 
       chunks.push(
-        new SourceNode(n.location.start.line, n.location.start.column - 1, targetFileNormilized, [
-          `/* @@resolved ${moduleFileNormilized} from ${targetFileNormilized} */\n`,
+        new SourceNode(n.location.start.line, n.location.start.column - 1, targetFileNormalized, [
+          `/* @@resolved ${moduleFileNormalized} from ${targetFileNormalized} */\n`,
           await compile(moduleFile, opt)
         ])
       )
@@ -140,12 +151,12 @@ export async function compile(targetFile: string, opt: CompileOptions): Promise<
         new SourceNode(
           n.location.start.line,
           n.location.start.column - 1,
-          targetFileNormilized,
+          targetFileNormalized,
           (n as RegionNode).body.flatMap(sn => {
             return new SourceNode(
               sn.location.start.line,
               sn.location.start.column - 1,
-              targetFileNormilized,
+              targetFileNormalized,
               transpileRegionBrackets(sn.text)
             )
           })
@@ -158,7 +169,7 @@ export async function compile(targetFile: string, opt: CompileOptions): Promise<
         new SourceNode(
           n.location.start.line,
           n.location.start.column - 1,
-          targetFileNormilized,
+          targetFileNormalized,
           transpileCallExpressionAssignment(n.text)
         )
       )
@@ -168,11 +179,13 @@ export async function compile(targetFile: string, opt: CompileOptions): Promise<
       new SourceNode(
         n.location.start.line,
         n.location.start.column - 1,
-        targetFileNormilized,
+        targetFileNormalized,
         n.text
       )
     )
   }
+
+  console.log(opt.log)
 
   return new SourceNode(null, null, null, chunks)
 }
