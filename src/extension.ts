@@ -1,10 +1,42 @@
 import * as path from 'path'
 import * as vscode from 'vscode'
+import { astStorage, gls, normalizePath } from './compiler/utils'
 import { getDefinitionInfoAtPosition } from './intellisense/definition'
 import type * as wgl from './intellisense/wglscript'
+import { mapToArray, requestOpenWglScriptWorkspace } from './utils'
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('Extension "wgl-toolchain" is now active')
+
+  const wsf = vscode.workspace.workspaceFolders
+  if (wsf === undefined) {
+    requestOpenWglScriptWorkspace()
+  } else {
+    console.log(`INFO: init source files watcher ${wsf[0].uri.path}`)
+
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeTextDocument(e => {
+        if (!e.document.isDirty) return
+
+        const projectRoot = wsf[0].uri.fsPath
+        const normalized = normalizePath(e.document.uri.fsPath, projectRoot)
+
+        if (astStorage.has(normalized)) {
+          astStorage.delete(normalized)
+          console.log(`INFO: changed source file ${normalized}`)
+        }
+
+        if (gls.code !== '') {
+          if (mapToArray(gls.modules).indexOf(normalized.toLowerCase()) === -1) return
+
+          gls.code = ''
+          gls.sourcemap = ''
+          gls.modules = new Map()
+          console.log(`INFO: reset global script by dependency ${normalized}`)
+        }
+      })
+    )
+  }
 
   context.subscriptions.push(
     vscode.languages.registerDefinitionProvider(['javascript'], {
@@ -14,9 +46,7 @@ export function activate(context: vscode.ExtensionContext) {
           .uri.fsPath
 
         if (ws === undefined) {
-          vscode.window.showWarningMessage(
-            'Языковая служба не работает. Необходимо открыть рабочее пространство WGLScript'
-          )
+          requestOpenWglScriptWorkspace()
           return []
         }
 
@@ -29,6 +59,10 @@ export function activate(context: vscode.ExtensionContext) {
           )
         } catch (error) {
           console.log(`ERROR: ${error}`)
+          astStorage.clear()
+          gls.code = ''
+          gls.sourcemap = ''
+          gls.modules = new Map()
         }
 
         return di.map(d => ({

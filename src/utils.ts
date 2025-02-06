@@ -1,4 +1,37 @@
+import { createHash } from 'crypto'
+import * as vscode from 'vscode'
 import { workspace } from 'vscode'
 
 export const getConfigurationOption = <T>(option: string): T =>
   workspace.getConfiguration('wglscript.globalscript').get(option) as T
+
+export function requestOpenWglScriptWorkspace() {
+  vscode.window
+    .showWarningMessage(
+      'WGLScript features are not working. You need to open the WGLScript project workspace',
+      'Open Folder'
+    )
+    .then(v => {
+      if (v !== 'Open Folder') return
+      vscode.commands.executeCommand('workbench.action.files.openFolder')
+    })
+}
+
+export function getHash(content: string) {
+  const hash = createHash('sha256')
+  hash.update(content)
+  return hash.digest('hex')
+}
+
+export function verifyHash(content: string, originalHash: string) {
+  const currentHash = getHash(content)
+  return currentHash === originalHash
+}
+
+export function arrayToMap<T>(array: Array<T>) {
+  return new Map(array.map((item, index) => [index, item]))
+}
+
+export function mapToArray<T>(map: Map<number, T>) {
+  return Array.from(map.values())
+}

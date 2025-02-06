@@ -3,8 +3,8 @@ import { SourceNode } from 'source-map'
 import * as parser from './parser.js'
 import {
   type CompileOptions,
+  attachGlobalScript,
   normalizePath,
-  parseGlobalScript,
   parseScriptModule
 } from './utils.js'
 
@@ -105,16 +105,15 @@ export async function compile(targetFile: string, opt: CompileOptions): Promise<
   opt.log.parseTime += endTime - startTime
   opt.modules.push(targetFileNormalized.toLowerCase())
 
-  if (ast.at(-1)?.type === 'breakLine') ast.pop() // remove EOF
-
   const chunks: Array<string | SourceNode> = []
 
   startTime = performance.now()
-  await parseGlobalScript(targetFile, opt, chunks)
+  await attachGlobalScript(targetFile, opt, chunks)
   endTime = performance.now()
   if (opt.log.compileGlobalScriptTime === undefined) opt.log.compileGlobalScriptTime = 0
   opt.log.compileGlobalScriptTime += endTime - startTime
 
+  if (ast.at(-1)?.type === 'breakLine') ast.pop() // remove EOF
   for (const n of ast) {
     if (n.type === 'moduleResolution') {
       const href = (n as ImportNode).href
@@ -185,7 +184,7 @@ export async function compile(targetFile: string, opt: CompileOptions): Promise<
     )
   }
 
-  console.log(opt.log)
+  // console.log(opt.log)
 
   return new SourceNode(null, null, null, chunks)
 }
