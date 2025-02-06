@@ -15,3 +15,7 @@ test('find valid definition', async () => {
   // function <here>sum(a, b) {
   assert.deepEqual(defInfo, [{ source: 'dep.js', line: 0, column: 9, length: 3 }])
 })
+
+// TODO: добавить тест с отступом символа (проксирование отступа в сурсмапах)
+
+// TODO: добавить тест с символом из d.ts (валидное проксирование ресурса)

@@ -16,7 +16,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
       vscode.workspace.onDidChangeTextDocument(e => {
-        if (!e.document.isDirty) return
+        if (!e.document.isDirty) return // TODO: проверить когда гит откатывается проходит ли триггер
 
         const projectRoot = wsf[0].uri.fsPath
         const normalized = normalizePath(e.document.uri.fsPath, projectRoot)

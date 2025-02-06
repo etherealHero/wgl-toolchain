@@ -93,6 +93,7 @@ export function transpileCallExpressionAssignment(code: string) {
  * @param opt compiler options
  */
 export async function compile(targetFile: string, opt: CompileOptions): Promise<SourceNode> {
+  // TODO: найти как писать бенчи для отладки + собрать дистрибутив и настройкой уровня логов
   let startTime = 0
   let endTime = 0
   if (opt.log === undefined) opt.log = {}
