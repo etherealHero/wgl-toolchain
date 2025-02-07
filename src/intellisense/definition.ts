@@ -6,6 +6,7 @@ import type * as wgl from './wglscript'
 
 import { compile } from '../compiler/compiler'
 import { normalizePath } from '../compiler/utils'
+import { logtime } from '../utils'
 import { bundle, createVirtualTypeScriptEnvironment } from './utils'
 
 export async function getDefinitionInfoAtPosition(
@@ -13,9 +14,6 @@ export async function getDefinitionInfoAtPosition(
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string
 ): Promise<wgl.Definition[]> {
-  let startTime = 0
-  let endTime = 0
-
   const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
   const strWSM = sourceNode.toStringWithSourceMap({
     file: normalizePath(document.fileName, projectRoot)
@@ -33,13 +31,9 @@ export async function getDefinitionInfoAtPosition(
   if (bundlePosition.line == null || bundlePosition.column == null) return []
   // ;(await import('fs')).writeFileSync(`${document.fileName}.b.js`, strWSM.code)
 
-  startTime = performance.now()
-  const env = createVirtualTypeScriptEnvironment(projectRoot, strWSM.code)
-  endTime = performance.now()
-  console.log(`INFO: createVirtualTypeScriptEnvironment ${endTime - startTime}ms`)
-
-  startTime = performance.now()
-  const bundleDefinitionInfo = env.languageService.getDefinitionAtPosition(
+  const env = logtime(createVirtualTypeScriptEnvironment, projectRoot, strWSM.code)
+  const bundleDefinitionInfo = logtime(
+    env.languageService.getDefinitionAtPosition,
     bundle,
     ts.getPositionOfLineAndCharacter(
       env.getSourceFile(bundle) as ts.SourceFileLike,
@@ -47,8 +41,6 @@ export async function getDefinitionInfoAtPosition(
       position.character
     )
   )
-  endTime = performance.now()
-  console.log(`INFO: getDefinitionAtPosition ${endTime - startTime}ms`)
 
   if (bundleDefinitionInfo === undefined || !bundleDefinitionInfo.length) return []
 

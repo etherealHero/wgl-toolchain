@@ -2,16 +2,12 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as tsvfs from '@typescript/vfs'
 import * as ts from 'typescript'
-import { getHash } from '../utils'
+import { getHash, logtime } from '../utils'
 
-/**
- * Bundle file name
- */
+/** Bundle file name */
 export const bundle = 'bundle.js'
 
-/**
- * WGLScript compiler options
- */
+/** WGLScript compiler options */
 export const compilerOpts = {
   allowJs: true,
   module: ts.ModuleKind.CommonJS,
@@ -36,16 +32,12 @@ export function createVirtualTypeScriptEnvironment(
   projectRoot: string,
   bundleContent: string
 ): tsvfs.VirtualTypeScriptEnvironment {
-  console.log(`INFO: ${Array.from(VTSEnvStorage.keys()).length} VTSEnv instances`)
-
   const hash = getHash(bundleContent)
 
   if (VTSEnvStorage.has(hash)) {
-    console.log('INFO: get VTSEnv from storage')
     return VTSEnvStorage.get(hash) as tsvfs.VirtualTypeScriptEnvironment
   }
 
-  console.log('INFO: create VTSEnv')
   const fsMap = tsvfs.createDefaultMapFromNodeModules(compilerOpts)
 
   try {
@@ -56,7 +48,7 @@ export function createVirtualTypeScriptEnvironment(
     fsMap.set('/lib.es5.d.ts', `${wgldts}${fsMap.get('/lib.es5.d.ts') as string}`)
   } catch (error) {
     console.log(
-      'WARN: types for WGLScript at node_modules/@types/wglscript/lib.wglscript.d.ts not found'
+      'ERROR: types for WGLScript at node_modules/@types/wglscript/lib.wglscript.d.ts not found'
     )
   }
 
@@ -72,7 +64,7 @@ export function createVirtualTypeScriptEnvironment(
   fsMap.set(bundle, bundleContent)
 
   const system = tsvfs.createSystem(fsMap)
-  const env = tsvfs.createVirtualTypeScriptEnvironment(system, [bundle], ts, compilerOpts)
+  const env = logtime(tsvfs.createVirtualTypeScriptEnvironment, system, [bundle], ts, compilerOpts)
 
   VTSEnvStorage.set(hash, env)
 

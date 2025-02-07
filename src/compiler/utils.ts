@@ -2,29 +2,17 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { SourceMapConsumer, SourceNode } from 'source-map'
 import * as vscode from 'vscode'
-import { arrayToMap, getConfigurationOption, mapToArray } from '../utils'
+import { arrayToMap, getConfigurationOption, logtime, mapToArray } from '../utils'
 import { type AST, type TNode, compile } from './compiler'
 import * as parser from './parser.js'
 
-/**
- * Normalized path from {@link normalizePath}
- */
+/** Normalized path from {@link normalizePath} */
 export type TNormalizedPath = string
 
 export interface CompileOptions {
   projectRoot: string
-  /**
-   * All modules which parsed & compiled (local and global modules)
-   */
+  /** All modules which parsed & compiled (local and global modules) */
   modules: string[]
-  skipAttachGlobalScript?: boolean
-  log?: CompilerLog
-}
-
-export interface CompilerLog {
-  parseTime?: number
-  readFileTime?: number
-  compileGlobalScriptTime?: number
 }
 
 /**
@@ -57,12 +45,11 @@ export async function parseScriptModule(file: string, projectRoot: string): Prom
       content = Buffer.from(readData).toString('utf8')
     }
   } catch (_) {
-    console.log(`WARN: Script module ${fileNormalized} not exists`)
+    console.log(`ERROR: Script module ${fileNormalized} not exists`)
     return []
   }
 
-  console.log(`INFO: parse ${fileNormalized}`)
-  const ast: AST<TNode> = parser.parse(content)
+  const ast: AST<TNode> = logtime(parser.parse, content)
   const astStack: { order: number; n: TNode }[] = []
   for (const i in ast) astStack.push({ order: Number(i), n: ast[Number(i)] })
   astStorage.set(fileNormalized, astStack)
@@ -82,40 +69,32 @@ export async function attachGlobalScript(
   opt: CompileOptions,
   chunks: Array<string | SourceNode>
 ) {
-  // if (opt.skipAttachGlobalScript) return
-
-  const targetFileNormalized = normalizePath(targetFile, opt.projectRoot)
-
   if (
     !getConfigurationOption<boolean>('enable') ||
     getConfigurationOption<string>('path') == null ||
     getConfigurationOption<string>('path')?.length === 0
-  ) {
+  )
     return
-  }
 
   const globalScript = path.join(opt.projectRoot, getConfigurationOption<string>('path'))
   const globalScriptNormalized = normalizePath(globalScript, opt.projectRoot)
+  const targetFileNormalized = normalizePath(targetFile, opt.projectRoot)
 
   if (!fs.existsSync(globalScript)) {
-    console.log(`WARN: Global script module ${globalScriptNormalized} not exists`)
+    console.log(`ERROR: Global script module ${globalScriptNormalized} not exists`)
     return
   }
 
   // когда будет собирать самого себя, чтобы не ушел в рекурсию
-  if (opt.modules.indexOf(globalScriptNormalized.toLowerCase()) !== -1) {
-    return
-  }
+  if (opt.modules.indexOf(globalScriptNormalized.toLowerCase()) !== -1) return
 
   let globalScriptSourceNode: SourceNode
 
   if (gls.code === '') {
-    console.log('INFO: compile global script')
     globalScriptSourceNode = await compile(globalScript, opt)
     const strWSM = globalScriptSourceNode.toStringWithSourceMap()
 
     gls.modules = arrayToMap([...opt.modules].filter(m => m !== targetFileNormalized.toLowerCase()))
-    // gls.modules = arrayToMap([...opt.modules])
     gls.code = strWSM.code
     gls.sourcemap = strWSM.map.toString()
   } else {
@@ -132,6 +111,4 @@ export async function attachGlobalScript(
       globalScriptSourceNode
     ])
   )
-
-  // opt.skipAttachGlobalScript = true
 }

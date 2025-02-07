@@ -93,26 +93,13 @@ export function transpileCallExpressionAssignment(code: string) {
  * @param opt compiler options
  */
 export async function compile(targetFile: string, opt: CompileOptions): Promise<SourceNode> {
-  // TODO: найти как писать бенчи для отладки + собрать дистрибутив и настройкой уровня логов
-  let startTime = 0
-  let endTime = 0
-  if (opt.log === undefined) opt.log = {}
-
+  // TODO: собрать дистрибутив и настройкой уровня логов
   const targetFileNormalized = normalizePath(targetFile, opt.projectRoot)
-  startTime = performance.now()
   const ast: AST<TNode> = await parseScriptModule(targetFile, opt.projectRoot)
-  endTime = performance.now()
-  if (opt.log.parseTime === undefined) opt.log.parseTime = 0
-  opt.log.parseTime += endTime - startTime
   opt.modules.push(targetFileNormalized.toLowerCase())
 
   const chunks: Array<string | SourceNode> = []
-
-  startTime = performance.now()
   await attachGlobalScript(targetFile, opt, chunks)
-  endTime = performance.now()
-  if (opt.log.compileGlobalScriptTime === undefined) opt.log.compileGlobalScriptTime = 0
-  opt.log.compileGlobalScriptTime += endTime - startTime
 
   if (ast.at(-1)?.type === 'breakLine') ast.pop() // remove EOF
   for (const n of ast) {
@@ -184,8 +171,6 @@ export async function compile(targetFile: string, opt: CompileOptions): Promise<
       )
     )
   }
-
-  // console.log(opt.log)
 
   return new SourceNode(null, null, null, chunks)
 }

@@ -12,8 +12,6 @@ export function activate(context: vscode.ExtensionContext) {
   if (wsf === undefined) {
     requestOpenWglScriptWorkspace()
   } else {
-    console.log(`INFO: init source files watcher ${wsf[0].uri.path}`)
-
     context.subscriptions.push(
       vscode.workspace.onDidChangeTextDocument(e => {
         if (!e.document.isDirty) return // TODO: проверить когда гит откатывается проходит ли триггер
@@ -23,7 +21,6 @@ export function activate(context: vscode.ExtensionContext) {
 
         if (astStorage.has(normalized)) {
           astStorage.delete(normalized)
-          console.log(`INFO: changed source file ${normalized}`)
         }
 
         if (gls.code !== '') {
@@ -32,7 +29,6 @@ export function activate(context: vscode.ExtensionContext) {
           gls.code = ''
           gls.sourcemap = ''
           gls.modules = new Map()
-          console.log(`INFO: reset global script by dependency ${normalized}`)
         }
       })
     )

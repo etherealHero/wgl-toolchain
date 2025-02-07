@@ -1,5 +1,6 @@
-import { createHash } from 'crypto'
 import * as vscode from 'vscode'
+
+import { createHash } from 'crypto'
 import { workspace } from 'vscode'
 
 export const getConfigurationOption = <T>(option: string): T =>
@@ -34,4 +35,20 @@ export function arrayToMap<T>(array: Array<T>) {
 
 export function mapToArray<T>(map: Map<number, T>) {
   return Array.from(map.values())
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: <explanation>
+type AnyFn = (...args: any[]) => any
+
+export function logtime<T extends AnyFn>(fn: T, ...args: Parameters<T>): ReturnType<T> {
+  const stack = ((new Error().stack || '').split('\n').at(2) || '')
+    .trim()
+    .replace(/\s+\(.+:\d+:\d+\)/, '')
+
+  const startTime = performance.now()
+  const result = fn(...args)
+  const endTime = performance.now()
+
+  console.log(`INFO: ${Math.round((endTime - startTime) * 100) / 100}ms ${fn.name} ${stack}`)
+  return result
 }
