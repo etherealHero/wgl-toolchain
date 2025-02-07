@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as tsvfs from '@typescript/vfs'
 import * as ts from 'typescript'
+import * as vscode from 'vscode'
 import { getHash, logtime } from '../utils'
 
 /** Bundle file name */
@@ -28,7 +29,7 @@ export const compilerOpts = {
 /** Map-key: bundle hash */
 const VTSEnvStorage: Map<string, tsvfs.VirtualTypeScriptEnvironment> = new Map()
 
-export function createVirtualTypeScriptEnvironment(
+export function getVTSEnv(
   projectRoot: string,
   bundleContent: string
 ): tsvfs.VirtualTypeScriptEnvironment {
@@ -38,6 +39,7 @@ export function createVirtualTypeScriptEnvironment(
     return VTSEnvStorage.get(hash) as tsvfs.VirtualTypeScriptEnvironment
   }
 
+  // TODO: здесь разобраться и складывать только нужные либы
   const fsMap = tsvfs.createDefaultMapFromNodeModules(compilerOpts)
 
   try {
@@ -69,4 +71,14 @@ export function createVirtualTypeScriptEnvironment(
   VTSEnvStorage.set(hash, env)
 
   return env
+}
+
+export function TSElementKindtoVSCodeCompletionItemKind(
+  el: ts.ScriptElementKind
+): vscode.CompletionItemKind {
+  if (el === ts.ScriptElementKind.variableElement) return vscode.CompletionItemKind.Variable
+  if (el === ts.ScriptElementKind.functionElement) return vscode.CompletionItemKind.Function
+  if (el === ts.ScriptElementKind.memberFunctionElement) return vscode.CompletionItemKind.Method
+  if (el === ts.ScriptElementKind.memberVariableElement) return vscode.CompletionItemKind.Property
+  return vscode.CompletionItemKind.Text
 }

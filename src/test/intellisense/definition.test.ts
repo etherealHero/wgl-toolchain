@@ -1,8 +1,9 @@
 import * as assert from 'assert'
 import * as path from 'path'
 
-import { getDefinitionInfoAtPosition } from '../../intellisense/definition'
+import { getDefinitionInfoAtPosition } from '../../intellisense/features'
 
+// TODO: переписать на end to end тест, клиент открывает воркфолдер, документ, ставит курсор, запрашивает дефинишн
 test('find valid definition', async () => {
   const __dirnameProxy = __dirname.replace(/([\\\/]+)out([\\\/]+)/, '$1src$2')
   const defInfo = await getDefinitionInfoAtPosition(
