@@ -25,6 +25,12 @@ export async function getDefinitionInfoAtPosition(
     file: normalizePath(document.fileName, projectRoot)
   })
 
+  // TODO: зависимости можно достать из компиляции (под задачу с кешированием на диск)
+  // async function extractSources() {
+  //   console.log((await new sm.SourceMapConsumer(strWSM.map.toString())).sources)
+  // }
+  // logtime(extractSources)
+
   let bundlePosition: sm.NullablePosition = { line: null, column: null, lastColumn: null }
   await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
     bundlePosition = consumer.generatedPositionFor({
@@ -64,6 +70,7 @@ export async function getDefinitionInfoAtPosition(
     return []
 
   const sourceDefinitionInfo: wgl.SymbolEntry[] = []
+  const refsAndPosForConsumer: [ts.DefinitionInfo, ts.LineAndCharacter][] = []
   for (const di of bundleDefinitionInfo) {
     const lineAndCharacter = ts.getLineAndCharacterOfPosition(
       env.getSourceFile(di.fileName) as ts.SourceFileLike,
@@ -78,23 +85,30 @@ export async function getDefinitionInfoAtPosition(
         length: di.textSpan.length
       })
     } else {
-      await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-        const sourcePosition = consumer.originalPositionFor({
-          line: lineAndCharacter.line + 1,
-          column: lineAndCharacter.character + 1
-        })
-
-        if (sourcePosition.source == null || sourcePosition.line == null) return
-
-        sourceDefinitionInfo.push({
-          source: sourcePosition.source,
-          line: sourcePosition.line - 1, // vscode 0-based
-          column: lineAndCharacter.character,
-          length: di.textSpan.length
-        })
-      })
+      refsAndPosForConsumer.push([di, lineAndCharacter])
     }
   }
+
+  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
+    refsAndPosForConsumer.map(record => {
+      const lineAndCharacter = record[1]
+      const di = record[0]
+
+      const sourcePosition = consumer.originalPositionFor({
+        line: lineAndCharacter.line + 1,
+        column: lineAndCharacter.character + 1
+      })
+
+      if (sourcePosition.source == null || sourcePosition.line == null) return
+
+      sourceDefinitionInfo.push({
+        source: sourcePosition.source,
+        line: sourcePosition.line - 1, // vscode 0-based
+        column: lineAndCharacter.character,
+        length: di.textSpan.length
+      })
+    })
+  })
 
   if (token?.isCancellationRequested) return []
 
@@ -431,8 +445,10 @@ export async function getReferencesAtPosition(
     return []
 
   const sourceEntries: wgl.SymbolEntry[] = []
+  const refsAndPosForConsumer: [ts.ReferenceEntry, ts.LineAndCharacter][] = []
   for (const br of bundleReferenceEntries) {
-    const lineAndCharacter = ts.getLineAndCharacterOfPosition(
+    const lineAndCharacter = logtime(
+      ts.getLineAndCharacterOfPosition,
       env.getSourceFile(br.fileName) as ts.SourceFileLike,
       br.textSpan.start
     )
@@ -445,23 +461,30 @@ export async function getReferencesAtPosition(
         length: br.textSpan.length
       })
     } else {
-      await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-        const sourcePosition = consumer.originalPositionFor({
-          line: lineAndCharacter.line + 1,
-          column: lineAndCharacter.character + 1
-        })
-
-        if (sourcePosition.source == null || sourcePosition.line == null) return
-
-        sourceEntries.push({
-          source: sourcePosition.source,
-          line: sourcePosition.line - 1, // vscode 0-based
-          column: lineAndCharacter.character,
-          length: br.textSpan.length
-        })
-      })
+      refsAndPosForConsumer.push([br, lineAndCharacter])
     }
   }
+
+  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
+    refsAndPosForConsumer.map(record => {
+      const lineAndCharacter = record[1]
+      const br = record[0]
+
+      const sourcePosition = consumer.originalPositionFor({
+        line: lineAndCharacter.line + 1,
+        column: lineAndCharacter.character + 1
+      })
+
+      if (sourcePosition.source == null || sourcePosition.line == null) return
+
+      sourceEntries.push({
+        source: sourcePosition.source,
+        line: sourcePosition.line - 1, // vscode 0-based
+        column: lineAndCharacter.character,
+        length: br.textSpan.length
+      })
+    })
+  })
 
   if (token?.isCancellationRequested) return []
 
