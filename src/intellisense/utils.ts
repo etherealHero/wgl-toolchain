@@ -82,3 +82,7 @@ export function TSElementKindtoVSCodeCompletionItemKind(
   if (el === ts.ScriptElementKind.memberVariableElement) return vscode.CompletionItemKind.Property
   return vscode.CompletionItemKind.Text
 }
+
+export function prettifyJSDoc(t: ts.JSDocTagInfo): string {
+  return `_@${t.name}_ ${(t.text || []).map((p, i) => (i ? p.text.replace(/([<>])/g, '\\$1') : `**${p.text.replace(/([<>])/g, '\\$1')}**`)).join('')}`
+}

@@ -7,7 +7,7 @@ import type * as wgl from './wglscript'
 import { compile } from '../compiler/compiler'
 import { normalizePath } from '../compiler/utils'
 import { logtime } from '../utils'
-import { TSElementKindtoVSCodeCompletionItemKind, bundle, getVTSEnv } from './utils'
+import { TSElementKindtoVSCodeCompletionItemKind, bundle, getVTSEnv, prettifyJSDoc } from './utils'
 
 export async function getDefinitionInfoAtPosition(
   document: Pick<vscode.TextDocument, 'fileName'>,
@@ -104,7 +104,6 @@ export async function getDefinitionInfoAtPosition(
 export async function getCompletionsAtPosition(
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
-  wordRangeAtPosition: string,
   projectRoot: string,
   token?: vscode.CancellationToken
 ): Promise<vscode.ProviderResult<vscode.CompletionItem[]>> {
@@ -160,45 +159,83 @@ export async function getCompletionsAtPosition(
   )
     return []
 
-  const completions = bundleCompletionInfo.entries.map<vscode.CompletionItem>((e, i) => {
-    const c: vscode.CompletionItem = {
-      label: e.name,
-      sortText: e.sortText,
-      kind: TSElementKindtoVSCodeCompletionItemKind(e.kind)
-    }
-
-    if (token?.isCancellationRequested) return c
-
-    if (wordRangeAtPosition.length >= 4 && e.name.match(wordRangeAtPosition)) {
-      const entryDetails = env.languageService.getCompletionEntryDetails(
-        bundle,
-        pos,
-        e.name,
-        ts.getDefaultFormatCodeSettings(),
-        undefined,
-        undefined,
-        undefined
-      )
-
-      if (entryDetails === undefined) return c
-
-      c.documentation = new vscode.MarkdownString()
-        .appendText(`${(entryDetails.documentation || []).map(p => p.text).join('')}\r\n`)
-        .appendText(
-          (entryDetails.tags || [])
-            .map(t => `@${t.name} ${(t.text || []).map(p => p.text).join('')}\r\n`)
-            .join('')
-        )
-
-      c.detail = (entryDetails.displayParts || []).map(p => p.text).join('')
-    }
-
-    return c
-  })
+  const completions = bundleCompletionInfo.entries.map<vscode.CompletionItem>((e, i) => ({
+    label: e.name,
+    sortText: e.sortText,
+    kind: TSElementKindtoVSCodeCompletionItemKind(e.kind)
+  }))
 
   if (token?.isCancellationRequested) []
 
   return completions
+}
+
+export async function getCompletionEntryDetails(
+  document: Pick<vscode.TextDocument, 'fileName'>,
+  position: Pick<vscode.Position, 'line' | 'character'>,
+  completionItemLabel: string,
+  projectRoot: string,
+  token?: vscode.CancellationToken
+): Promise<vscode.ProviderResult<vscode.CompletionItem>> {
+  if (token?.isCancellationRequested) return
+
+  const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
+
+  if (token?.isCancellationRequested) return
+
+  const strWSM = sourceNode.toStringWithSourceMap({
+    file: normalizePath(document.fileName, projectRoot)
+  })
+
+  let bundlePosition: sm.NullablePosition = { line: null, column: null, lastColumn: null }
+  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
+    bundlePosition = consumer.generatedPositionFor({
+      source: normalizePath(document.fileName, projectRoot),
+      line: position.line + 1, // vs-code 0-based
+      column: position.character
+    })
+  })
+
+  if (
+    bundlePosition.line == null ||
+    bundlePosition.column == null ||
+    token?.isCancellationRequested
+  )
+    return
+  // ;(await import('fs')).writeFileSync(`${document.fileName}.b.js`, strWSM.code)
+
+  const env = logtime(getVTSEnv, projectRoot, strWSM.code)
+
+  if (token?.isCancellationRequested) return
+
+  const pos = ts.getPositionOfLineAndCharacter(
+    env.getSourceFile(bundle) as ts.SourceFileLike,
+    bundlePosition.line - 1, // ts 0-based
+    position.character
+  )
+
+  const details = logtime(
+    env.languageService.getCompletionEntryDetails,
+    bundle,
+    pos,
+    completionItemLabel,
+    ts.getDefaultFormatCodeSettings(),
+    undefined,
+    undefined,
+    undefined
+  )
+
+  if (details === undefined || token?.isCancellationRequested) return
+
+  return {
+    label: details.name,
+    kind: TSElementKindtoVSCodeCompletionItemKind(details.kind),
+    detail: (details.displayParts || []).map(p => p.text).join(''),
+    documentation: new vscode.MarkdownString()
+      .appendMarkdown((details.documentation || []).map(p => p.text).join(''))
+      .appendMarkdown('\r\n\r\n')
+      .appendMarkdown((details.tags || []).map(prettifyJSDoc).join('\r\n\r\n'))
+  }
 }
 
 export async function getQuickInfoAtPosition(
@@ -238,7 +275,8 @@ export async function getQuickInfoAtPosition(
 
   if (token?.isCancellationRequested) return []
 
-  const bundleQuickInfo = env.languageService.getQuickInfoAtPosition(
+  const bundleQuickInfo = logtime(
+    env.languageService.getQuickInfoAtPosition,
     bundle,
     ts.getPositionOfLineAndCharacter(
       env.getSourceFile(bundle) as ts.SourceFileLike,
@@ -252,11 +290,82 @@ export async function getQuickInfoAtPosition(
   return [
     new vscode.MarkdownString()
       .appendCodeblock((bundleQuickInfo.displayParts || []).map(p => p.text).join(''), 'typescript')
-      .appendText(`${(bundleQuickInfo.documentation || []).map(p => p.text).join('')}\r\n`)
-      .appendText(
-        (bundleQuickInfo.tags || [])
-          .map(t => `@${t.name} ${(t.text || []).map(p => p.text).join('')}`)
-          .join('\r\n')
-      )
+      .appendMarkdown((bundleQuickInfo.documentation || []).map(p => p.text).join(''))
+      .appendMarkdown('\r\n\r\n')
+      .appendMarkdown((bundleQuickInfo.tags || []).map(prettifyJSDoc).join('\r\n\r\n'))
   ]
+}
+
+export async function getSignatureHelpItems(
+  document: Pick<vscode.TextDocument, 'fileName'>,
+  position: Pick<vscode.Position, 'line' | 'character'>,
+  projectRoot: string,
+  token?: vscode.CancellationToken
+  // TODO: все фичи привести к одному АПИ
+): Promise<vscode.ProviderResult<vscode.SignatureHelp>> {
+  if (token?.isCancellationRequested) return
+
+  const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
+
+  if (token?.isCancellationRequested) return
+
+  const strWSM = sourceNode.toStringWithSourceMap({
+    file: normalizePath(document.fileName, projectRoot)
+  })
+
+  let bundlePosition: sm.NullablePosition = { line: null, column: null, lastColumn: null }
+  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
+    bundlePosition = consumer.generatedPositionFor({
+      source: normalizePath(document.fileName, projectRoot),
+      line: position.line + 1, // vs-code 0-based
+      column: position.character
+    })
+  })
+
+  if (
+    bundlePosition.line == null ||
+    bundlePosition.column == null ||
+    token?.isCancellationRequested
+  )
+    return
+  // ;(await import('fs')).writeFileSync(`${document.fileName}.b.js`, strWSM.code)
+
+  const env = logtime(getVTSEnv, projectRoot, strWSM.code)
+
+  if (token?.isCancellationRequested) return
+
+  const pos = ts.getPositionOfLineAndCharacter(
+    env.getSourceFile(bundle) as ts.SourceFileLike,
+    bundlePosition.line - 1, // ts 0-based
+    position.character
+  )
+
+  const bundleSignatureHelpItems = logtime(env.languageService.getSignatureHelpItems, bundle, pos, {
+    triggerReason: { kind: 'retrigger' }
+  })
+
+  if (
+    bundleSignatureHelpItems === undefined ||
+    !bundleSignatureHelpItems.items.length ||
+    token?.isCancellationRequested
+  )
+    return
+
+  const signatures = bundleSignatureHelpItems.items.map<vscode.SignatureInformation>(i => ({
+    label:
+      i.prefixDisplayParts.map(p => p.text).join('') +
+      i.parameters.map(p => p.displayParts.map(d => d.text).join('')).join(', ') +
+      i.suffixDisplayParts.map(p => p.text).join(''),
+    parameters: i.parameters.map(p => ({ label: p.displayParts.map(d => d.text).join('') })),
+    documentation: new vscode.MarkdownString()
+      .appendMarkdown(i.documentation.map(d => d.text).join(''))
+      .appendMarkdown('\r\n\r\n')
+      .appendMarkdown(i.tags.map(prettifyJSDoc).join('\r\n\r\n'))
+  }))
+
+  return {
+    signatures,
+    activeSignature: 0,
+    activeParameter: bundleSignatureHelpItems.argumentIndex
+  }
 }

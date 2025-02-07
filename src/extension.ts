@@ -1,12 +1,9 @@
 import * as path from 'path'
 import * as vscode from 'vscode'
-import { astStorage, attachGlobalScript, gls, normalizePath } from './compiler/utils'
-import {
-  getCompletionsAtPosition,
-  getDefinitionInfoAtPosition,
-  getQuickInfoAtPosition
-} from './intellisense/features'
+import * as intellisense from './intellisense/features'
 import type * as wgl from './intellisense/wglscript'
+
+import { astStorage, attachGlobalScript, gls, normalizePath } from './compiler/utils'
 import { mapToArray, requestOpenWglScriptWorkspace } from './utils'
 
 export function activate(context: vscode.ExtensionContext) {
@@ -51,22 +48,19 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.languages.registerDefinitionProvider(['javascript'], {
       provideDefinition: async (document, position, token) => {
-        const ws = vscode.workspace.getWorkspaceFolder(document.uri)
-        const wsPath = (vscode.workspace.getWorkspaceFolder(document.uri) as vscode.WorkspaceFolder)
-          .uri.fsPath
+        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-        if (ws === undefined) {
+        if (wsPath === undefined) {
           requestOpenWglScriptWorkspace()
-          return []
+          return
         }
 
         let di: wgl.Definition[] = []
         try {
-          di = await getDefinitionInfoAtPosition(
+          di = await intellisense.getDefinitionInfoAtPosition(
             { fileName: document.fileName },
             position,
-            (vscode.workspace.getWorkspaceFolder(document.uri) as vscode.WorkspaceFolder).uri
-              .fsPath,
+            wsPath,
             token
           )
         } catch (error) {
@@ -90,27 +84,18 @@ export function activate(context: vscode.ExtensionContext) {
       ['javascript'],
       {
         provideCompletionItems: async (document, position, token) => {
-          // console.log(`[DEBUG:${new Date().toISOString()}]: trigger provideCompletionItems`)
+          const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-          const ws = vscode.workspace.getWorkspaceFolder(document.uri)
-
-          if (ws === undefined) {
+          if (wsPath === undefined) {
             requestOpenWglScriptWorkspace()
-            return []
+            return
           }
 
-          const r = document.getWordRangeAtPosition(position)
-          const wordRangeAtPosition = document
-            .lineAt(position.line)
-            .text.slice(r?.start.character, r?.end.character)
-
           try {
-            const completions = await getCompletionsAtPosition(
+            const completions = await intellisense.getCompletionsAtPosition(
               { fileName: document.fileName },
               position,
-              wordRangeAtPosition,
-              (vscode.workspace.getWorkspaceFolder(document.uri) as vscode.WorkspaceFolder).uri
-                .fsPath,
+              wsPath,
               token
             )
 
@@ -121,8 +106,36 @@ export function activate(context: vscode.ExtensionContext) {
             gls.code = ''
             gls.sourcemap = ''
             gls.modules = new Map()
+          }
+        },
+        resolveCompletionItem: async (item, token) => {
+          if (!vscode.window.activeTextEditor) return
 
-            return []
+          const document = vscode.window.activeTextEditor.document
+          const position = vscode.window.activeTextEditor.selection.active
+          const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+          if (wsPath === undefined) {
+            requestOpenWglScriptWorkspace()
+            return
+          }
+
+          try {
+            const completion = await intellisense.getCompletionEntryDetails(
+              { fileName: document.fileName },
+              position,
+              typeof item.label === 'string' ? item.label : item.label.label,
+              wsPath,
+              token
+            )
+
+            return completion
+          } catch (error) {
+            console.log(`ERROR: ${error}`)
+            astStorage.clear()
+            gls.code = ''
+            gls.sourcemap = ''
+            gls.modules = new Map()
           }
         }
       },
@@ -133,20 +146,18 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.languages.registerHoverProvider(['javascript'], {
       provideHover: async (document, position, token) => {
-        console.log(`[DEBUG:${new Date().toISOString()}]: trigger provideHover`)
-        const ws = vscode.workspace.getWorkspaceFolder(document.uri)
+        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-        if (ws === undefined) {
+        if (wsPath === undefined) {
           requestOpenWglScriptWorkspace()
-          return { contents: [] }
+          return
         }
 
         try {
-          const quickInfo = await getQuickInfoAtPosition(
+          const quickInfo = await intellisense.getQuickInfoAtPosition(
             { fileName: document.fileName },
             position,
-            (vscode.workspace.getWorkspaceFolder(document.uri) as vscode.WorkspaceFolder).uri
-              .fsPath,
+            wsPath,
             token
           )
 
@@ -157,10 +168,43 @@ export function activate(context: vscode.ExtensionContext) {
           gls.code = ''
           gls.sourcemap = ''
           gls.modules = new Map()
-
-          return { contents: [] }
         }
       }
     })
+  )
+
+  context.subscriptions.push(
+    vscode.languages.registerSignatureHelpProvider(
+      ['javascript'],
+      {
+        provideSignatureHelp: async (document, position, token, _context) => {
+          const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+          if (wsPath === undefined) {
+            requestOpenWglScriptWorkspace()
+            return
+          }
+
+          try {
+            const signatureHelpItems = await intellisense.getSignatureHelpItems(
+              { fileName: document.fileName },
+              position,
+              wsPath,
+              token
+            )
+
+            return signatureHelpItems
+          } catch (error) {
+            console.log(`ERROR: ${error}`)
+            astStorage.clear()
+            gls.code = ''
+            gls.sourcemap = ''
+            gls.modules = new Map()
+          }
+        }
+      },
+      ',',
+      '('
+    )
   )
 }
