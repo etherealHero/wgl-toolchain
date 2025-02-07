@@ -6,6 +6,11 @@ This extension provides support for the WGLScript programming language.
 
 - [x] intellisense
 	- [x] go to definition
+	- [x] completions
+	- [x] hover & signature help
+	- [x] find references (in ScriptModule/Bundle context)
+	- [] find references (in whole repository)
+	- [] find references (in database objects)
 	- [] go to database objects
 - [] formatter
 - [] linter
