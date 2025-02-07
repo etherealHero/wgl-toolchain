@@ -69,6 +69,7 @@ export function activate(context: vscode.ExtensionContext) {
           gls.code = ''
           gls.sourcemap = ''
           gls.modules = new Map()
+          return
         }
 
         return di.map(d => ({
@@ -218,9 +219,81 @@ export function activate(context: vscode.ExtensionContext) {
           return
         }
 
+        let refs: wgl.SymbolEntry[] = []
+        try {
+          refs = await intellisense.getReferencesAtPosition(
+            { fileName: document.fileName },
+            position,
+            wsPath,
+            token
+          )
+        } catch (error) {
+          console.log(`ERROR: ${error}`)
+          astStorage.clear()
+          gls.code = ''
+          gls.sourcemap = ''
+          gls.modules = new Map()
+          return
+        }
+
+        return refs.map(d => ({
+          uri: vscode.Uri.file(path.join(wsPath, d.source)),
+          range: new vscode.Range(d.line, d.column, d.line, d.column + d.length)
+        }))
+      }
+    })
+  )
+
+  context.subscriptions.push(
+    vscode.languages.registerRenameProvider(['javascript'], {
+      provideRenameEdits: async (document, position, newName, token) => {
+        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+        if (wsPath === undefined) {
+          requestOpenWglScriptWorkspace()
+          return
+        }
+
+        let refs: wgl.SymbolEntry[] = []
+        try {
+          refs = await intellisense.getReferencesAtPosition(
+            { fileName: document.fileName },
+            position,
+            wsPath,
+            token
+          )
+        } catch (error) {
+          console.log(`ERROR: ${error}`)
+          astStorage.clear()
+          gls.code = ''
+          gls.sourcemap = ''
+          gls.modules = new Map()
+          return
+        }
+
+        const wsEdit = new vscode.WorkspaceEdit()
+
+        refs.map(d =>
+          wsEdit.replace(
+            vscode.Uri.file(path.join(wsPath, d.source)),
+            new vscode.Range(d.line, d.column, d.line, d.column + d.length),
+            newName
+          )
+        )
+
+        return wsEdit
+      },
+      prepareRename: async (document, position, token) => {
+        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+        if (wsPath === undefined) {
+          requestOpenWglScriptWorkspace()
+          return
+        }
+
         let di: wgl.SymbolEntry[] = []
         try {
-          di = await intellisense.getReferencesAtPosition(
+          di = await intellisense.getDefinitionInfoAtPosition(
             { fileName: document.fileName },
             position,
             wsPath,
@@ -234,10 +307,11 @@ export function activate(context: vscode.ExtensionContext) {
           gls.modules = new Map()
         }
 
-        return di.map(d => ({
-          uri: vscode.Uri.file(path.join(wsPath, d.source)),
-          range: new vscode.Range(d.line, d.column, d.line, d.column + d.length)
-        }))
+        if (di.find(d => d.source.match('node_modules\\\\@types'))) {
+          return new Promise((_, r) =>
+            r('You cannot rename elements that are defined in the standart library')
+          )
+        }
       }
     })
   )
