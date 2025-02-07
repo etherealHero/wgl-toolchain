@@ -55,7 +55,7 @@ export function activate(context: vscode.ExtensionContext) {
           return
         }
 
-        let di: wgl.Definition[] = []
+        let di: wgl.SymbolEntry[] = []
         try {
           di = await intellisense.getDefinitionInfoAtPosition(
             { fileName: document.fileName },
@@ -206,5 +206,39 @@ export function activate(context: vscode.ExtensionContext) {
       ',',
       '('
     )
+  )
+
+  context.subscriptions.push(
+    vscode.languages.registerReferenceProvider(['javascript'], {
+      provideReferences: async (document, position, context, token) => {
+        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+        if (wsPath === undefined) {
+          requestOpenWglScriptWorkspace()
+          return
+        }
+
+        let di: wgl.SymbolEntry[] = []
+        try {
+          di = await intellisense.getReferencesAtPosition(
+            { fileName: document.fileName },
+            position,
+            wsPath,
+            token
+          )
+        } catch (error) {
+          console.log(`ERROR: ${error}`)
+          astStorage.clear()
+          gls.code = ''
+          gls.sourcemap = ''
+          gls.modules = new Map()
+        }
+
+        return di.map(d => ({
+          uri: vscode.Uri.file(path.join(wsPath, d.source)),
+          range: new vscode.Range(d.line, d.column, d.line, d.column + d.length)
+        }))
+      }
+    })
   )
 }

@@ -14,7 +14,7 @@ export async function getDefinitionInfoAtPosition(
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
   token?: vscode.CancellationToken
-): Promise<wgl.Definition[]> {
+): Promise<wgl.SymbolEntry[]> {
   if (token?.isCancellationRequested) return []
 
   const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
@@ -63,7 +63,7 @@ export async function getDefinitionInfoAtPosition(
   )
     return []
 
-  const sourceDefinitionInfo: wgl.Definition[] = []
+  const sourceDefinitionInfo: wgl.SymbolEntry[] = []
   for (const di of bundleDefinitionInfo) {
     const lineAndCharacter = ts.getLineAndCharacterOfPosition(
       env.getSourceFile(di.fileName) as ts.SourceFileLike,
@@ -368,4 +368,102 @@ export async function getSignatureHelpItems(
     activeSignature: 0,
     activeParameter: bundleSignatureHelpItems.argumentIndex
   }
+}
+
+export async function getReferencesAtPosition(
+  document: Pick<vscode.TextDocument, 'fileName'>,
+  position: Pick<vscode.Position, 'line' | 'character'>,
+  projectRoot: string,
+  token?: vscode.CancellationToken
+): Promise<wgl.SymbolEntry[]> {
+  // TODO:
+  // 1 находим модуль* в котором определен символ для поиска
+  // 2 находим все модули** где есть в зивисимостях моудль*
+  // 3 во всех модулях** от дефинишена символа ищем референсы и сливаем их
+  // 2* кэшировать АСТ всех модулей на диск
+  // 3* по этой фиче делать прогресс от 0..кол-во обработанных модулей-бандлов
+  if (token?.isCancellationRequested) return []
+
+  const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
+
+  if (token?.isCancellationRequested) return []
+
+  const strWSM = sourceNode.toStringWithSourceMap({
+    file: normalizePath(document.fileName, projectRoot)
+  })
+
+  let bundlePosition: sm.NullablePosition = { line: null, column: null, lastColumn: null }
+  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
+    bundlePosition = consumer.generatedPositionFor({
+      source: normalizePath(document.fileName, projectRoot),
+      line: position.line + 1, // vs-code 0-based
+      column: position.character
+    })
+  })
+
+  if (
+    bundlePosition.line == null ||
+    bundlePosition.column == null ||
+    token?.isCancellationRequested
+  )
+    return []
+  // ;(await import('fs')).writeFileSync(`${document.fileName}.b.js`, strWSM.code)
+
+  const env = logtime(getVTSEnv, projectRoot, strWSM.code)
+
+  if (token?.isCancellationRequested) return []
+
+  const bundleReferenceEntries = logtime(
+    env.languageService.getReferencesAtPosition,
+    bundle,
+    ts.getPositionOfLineAndCharacter(
+      env.getSourceFile(bundle) as ts.SourceFileLike,
+      bundlePosition.line - 1, // ts 0-based
+      position.character
+    )
+  )
+
+  if (
+    bundleReferenceEntries === undefined ||
+    !bundleReferenceEntries.length ||
+    token?.isCancellationRequested
+  )
+    return []
+
+  const sourceEntries: wgl.SymbolEntry[] = []
+  for (const br of bundleReferenceEntries) {
+    const lineAndCharacter = ts.getLineAndCharacterOfPosition(
+      env.getSourceFile(br.fileName) as ts.SourceFileLike,
+      br.textSpan.start
+    )
+
+    if (br.fileName !== bundle /** lib.d.ts files */) {
+      sourceEntries.push({
+        source: path.join('node_modules', '@types', 'wglscript', 'generated', br.fileName),
+        line: lineAndCharacter.line, // vscode 0-based
+        column: lineAndCharacter.character,
+        length: br.textSpan.length
+      })
+    } else {
+      await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
+        const sourcePosition = consumer.originalPositionFor({
+          line: lineAndCharacter.line + 1,
+          column: lineAndCharacter.character + 1
+        })
+
+        if (sourcePosition.source == null || sourcePosition.line == null) return
+
+        sourceEntries.push({
+          source: sourcePosition.source,
+          line: sourcePosition.line - 1, // vscode 0-based
+          column: lineAndCharacter.character,
+          length: br.textSpan.length
+        })
+      })
+    }
+  }
+
+  if (token?.isCancellationRequested) return []
+
+  return sourceEntries
 }
