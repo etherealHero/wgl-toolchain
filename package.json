@@ -2,7 +2,7 @@
   "name": "wgl-toolchain",
   "displayName": "WGLScript toolchain",
   "description": "WGLScript formatter, linter, intellisense for VS Code",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "etherealhero",
   "repository": "https://github.com/Microsoft/vscode-extension-samples/wgl-toolchain",
   "keywords": ["wglscript", "LSP", "formatter", "linter", "intellisense"],

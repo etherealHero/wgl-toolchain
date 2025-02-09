@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.0.4
+
+- rename symbol (in ScriptModule/Bundle context)
+- find references & goto definition preformance fix (source-map consumer)
+
 ## 0.0.3
 
 - cache tsvfs

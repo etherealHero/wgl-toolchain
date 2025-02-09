@@ -30,9 +30,9 @@ export function activate(context: vscode.ExtensionContext) {
 
         const normalized = normalizePath(e.document.uri.fsPath, projectRoot)
 
-        if (astStorage.has(normalized)) {
-          astStorage.delete(normalized)
-        }
+        // TODO: удалять tsvfs инстанс текущего бандла
+
+        if (astStorage.has(normalized)) astStorage.delete(normalized)
 
         if (gls.code !== '') {
           if (mapToArray(gls.modules).indexOf(normalized.toLowerCase()) === -1) return
