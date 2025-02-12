@@ -315,4 +315,72 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   )
+
+  context.subscriptions.push(
+    vscode.languages.registerDocumentSymbolProvider(['javascript'], {
+      provideDocumentSymbols: async (document, token) => {
+        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+        if (wsPath === undefined) {
+          requestOpenWglScriptWorkspace()
+          return
+        }
+
+        try {
+          return await intellisense.getNavigationBarItems(
+            { fileName: document.fileName },
+            wsPath,
+            token
+          )
+        } catch (error) {
+          console.log(`ERROR: ${error}`)
+          astStorage.clear()
+          gls.code = ''
+          gls.sourcemap = ''
+          gls.modules = new Map()
+        }
+      }
+    })
+  )
+
+  context.subscriptions.push(
+    vscode.languages.registerWorkspaceSymbolProvider({
+      provideWorkspaceSymbols: async (query, token) => {
+        const editor = vscode.window.activeTextEditor
+        if (!editor) {
+          // TODO: потом переделать под глобальные символы
+          return [
+            new vscode.SymbolInformation(
+              'You need to open any WGLScript file to resolve workspace symbols',
+              vscode.SymbolKind.File,
+              '',
+              new vscode.Location(vscode.Uri.file(''), new vscode.Range(0, 0, 0, 0))
+            )
+          ]
+        }
+
+        const wsPath = vscode.workspace.getWorkspaceFolder(editor.document.uri)?.uri.fsPath
+
+        if (wsPath === undefined) {
+          requestOpenWglScriptWorkspace()
+          return
+        }
+
+        try {
+          return await intellisense.getNavigationBarItems(
+            { fileName: editor.document.fileName },
+            wsPath,
+            token,
+            true
+          )
+        } catch (error) {
+          console.log(`ERROR: ${error}`)
+          astStorage.clear()
+          gls.code = ''
+          gls.sourcemap = ''
+          gls.modules = new Map()
+        }
+      }
+    })
+  )
 }

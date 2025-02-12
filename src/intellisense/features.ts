@@ -7,7 +7,13 @@ import type * as wgl from './wglscript'
 import { compile } from '../compiler/compiler'
 import { normalizePath } from '../compiler/utils'
 import { logtime } from '../utils'
-import { TSElementKindtoVSCodeCompletionItemKind, bundle, getVTSEnv, prettifyJSDoc } from './utils'
+import {
+  TSElementKindtoVSCodeCompletionItemKind,
+  TSElementKindtoVSCodeSymbolKind,
+  bundle,
+  getVTSEnv,
+  prettifyJSDoc
+} from './utils'
 
 export async function getDefinitionInfoAtPosition(
   document: Pick<vscode.TextDocument, 'fileName'>,
@@ -489,4 +495,111 @@ export async function getReferencesAtPosition(
   if (token?.isCancellationRequested) return []
 
   return sourceEntries
+}
+
+export async function getNavigationBarItems(
+  document: Pick<vscode.TextDocument, 'fileName'>,
+  projectRoot: string,
+  token?: vscode.CancellationToken,
+  includeWorkspaceSymbols?: true
+): Promise<vscode.ProviderResult<vscode.SymbolInformation[]>> {
+  if (token?.isCancellationRequested) return
+
+  const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
+  const documentNormalized = normalizePath(document.fileName, projectRoot)
+
+  if (token?.isCancellationRequested) return
+
+  const strWSM = sourceNode.toStringWithSourceMap({
+    file: normalizePath(document.fileName, projectRoot)
+  })
+
+  const env = logtime(getVTSEnv, projectRoot, strWSM.code)
+
+  if (token?.isCancellationRequested) return
+
+  const bundleNavigationTree = [logtime(env.languageService.getNavigationTree, bundle)]
+
+  if (
+    bundleNavigationTree === undefined ||
+    !bundleNavigationTree.length ||
+    token?.isCancellationRequested
+  )
+    return
+
+  const sourceSymbols: vscode.SymbolInformation[] = []
+  const refsAndPosForConsumer: Array<{
+    item: ts.NavigationTree
+    start: ts.LineAndCharacter
+    end: ts.LineAndCharacter
+    container?: string
+  }> = []
+
+  function collectNavBarItemsWithLineAndCharacter(items: ts.NavigationTree[], container?: string) {
+    if (token?.isCancellationRequested) return
+
+    for (const item of items) {
+      const pos = item.spans.at(0)
+
+      if (pos) {
+        const start = ts.getLineAndCharacterOfPosition(
+          env.getSourceFile(bundle) as ts.SourceFileLike,
+          pos.start
+        )
+        const end = ts.getLineAndCharacterOfPosition(
+          env.getSourceFile(bundle) as ts.SourceFileLike,
+          pos.start + pos.length
+        )
+
+        container && refsAndPosForConsumer.push({ item, start, end, container })
+      }
+
+      if (item.childItems) collectNavBarItemsWithLineAndCharacter(item.childItems, item.text)
+    }
+  }
+
+  collectNavBarItemsWithLineAndCharacter(bundleNavigationTree)
+
+  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
+    refsAndPosForConsumer.map(r => {
+      if (token?.isCancellationRequested) return
+
+      const sourcePositionStart = consumer.originalPositionFor({
+        line: r.start.line + 1,
+        column: r.start.character + 1
+      })
+
+      if (sourcePositionStart.source == null || sourcePositionStart.line == null) return
+      if (sourcePositionStart.source !== documentNormalized && !includeWorkspaceSymbols) return
+
+      const sourcePositionEnd = consumer.originalPositionFor({
+        line: r.end.line + 1,
+        column: r.end.character + 1
+      })
+
+      if (sourcePositionEnd.source == null || sourcePositionEnd.line == null) return
+      if (sourcePositionEnd.source !== documentNormalized && !includeWorkspaceSymbols) return
+
+      sourceSymbols.push(
+        new vscode.SymbolInformation(
+          r.item.text,
+          TSElementKindtoVSCodeSymbolKind(r.item.kind),
+          r.container ?? '',
+          new vscode.Location(
+            vscode.Uri.file(path.join(projectRoot, sourcePositionStart.source)),
+            new vscode.Range(
+              sourcePositionStart.line - 1, // vscode 0-based
+              r.start.character,
+              sourcePositionEnd.line - 1, // vscode 0-based
+              r.end.character
+            )
+          )
+        )
+      )
+    })
+  })
+
+  if (token?.isCancellationRequested) return
+
+  return sourceSymbols
 }

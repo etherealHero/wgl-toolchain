@@ -76,11 +76,123 @@ export function getVTSEnv(
 export function TSElementKindtoVSCodeCompletionItemKind(
   el: ts.ScriptElementKind
 ): vscode.CompletionItemKind {
-  if (el === ts.ScriptElementKind.variableElement) return vscode.CompletionItemKind.Variable
-  if (el === ts.ScriptElementKind.functionElement) return vscode.CompletionItemKind.Function
-  if (el === ts.ScriptElementKind.memberFunctionElement) return vscode.CompletionItemKind.Method
-  if (el === ts.ScriptElementKind.memberVariableElement) return vscode.CompletionItemKind.Property
-  return vscode.CompletionItemKind.Text
+  switch (el) {
+    case ts.ScriptElementKind.moduleElement:
+      return vscode.CompletionItemKind.Module
+    case ts.ScriptElementKind.classElement:
+    case ts.ScriptElementKind.localClassElement:
+      return vscode.CompletionItemKind.Class
+    case ts.ScriptElementKind.interfaceElement:
+      return vscode.CompletionItemKind.Interface
+    case ts.ScriptElementKind.typeElement:
+      return vscode.CompletionItemKind.Struct
+    case ts.ScriptElementKind.enumElement:
+      return vscode.CompletionItemKind.Enum
+    case ts.ScriptElementKind.enumMemberElement:
+      return vscode.CompletionItemKind.EnumMember
+    case ts.ScriptElementKind.variableElement:
+    case ts.ScriptElementKind.localVariableElement:
+    case ts.ScriptElementKind.variableUsingElement:
+    case ts.ScriptElementKind.variableAwaitUsingElement:
+      return vscode.CompletionItemKind.Variable
+    case ts.ScriptElementKind.constElement:
+      return vscode.CompletionItemKind.Constant
+    case ts.ScriptElementKind.letElement:
+      return vscode.CompletionItemKind.Variable
+    case ts.ScriptElementKind.functionElement:
+    case ts.ScriptElementKind.localFunctionElement:
+      return vscode.CompletionItemKind.Function
+    case ts.ScriptElementKind.memberFunctionElement:
+      return vscode.CompletionItemKind.Method
+    case ts.ScriptElementKind.memberVariableElement:
+      return vscode.CompletionItemKind.Property
+    case ts.ScriptElementKind.memberGetAccessorElement:
+    case ts.ScriptElementKind.memberSetAccessorElement:
+    case ts.ScriptElementKind.memberAccessorVariableElement:
+      return vscode.CompletionItemKind.Property
+    case ts.ScriptElementKind.constructorImplementationElement:
+      return vscode.CompletionItemKind.Constructor
+    case ts.ScriptElementKind.callSignatureElement:
+      return vscode.CompletionItemKind.Function
+    case ts.ScriptElementKind.indexSignatureElement:
+      return vscode.CompletionItemKind.Operator
+    case ts.ScriptElementKind.constructSignatureElement:
+      return vscode.CompletionItemKind.Constructor
+    case ts.ScriptElementKind.parameterElement:
+      return vscode.CompletionItemKind.Variable
+    case ts.ScriptElementKind.typeParameterElement:
+      return vscode.CompletionItemKind.TypeParameter
+    case ts.ScriptElementKind.keyword:
+      return vscode.CompletionItemKind.Keyword
+    case ts.ScriptElementKind.string:
+      return vscode.CompletionItemKind.Text
+    default:
+      return vscode.CompletionItemKind.Text
+  }
+}
+
+export function TSElementKindtoVSCodeSymbolKind(el: ts.ScriptElementKind): vscode.SymbolKind {
+  switch (el) {
+    case ts.ScriptElementKind.moduleElement:
+      return vscode.SymbolKind.Module
+    case ts.ScriptElementKind.classElement:
+    case ts.ScriptElementKind.localClassElement:
+      return vscode.SymbolKind.Class
+    case ts.ScriptElementKind.interfaceElement:
+      return vscode.SymbolKind.Interface
+    case ts.ScriptElementKind.typeElement:
+      return vscode.SymbolKind.Struct
+    case ts.ScriptElementKind.enumElement:
+      return vscode.SymbolKind.Enum
+    case ts.ScriptElementKind.enumMemberElement:
+      return vscode.SymbolKind.EnumMember
+    case ts.ScriptElementKind.variableElement:
+    case ts.ScriptElementKind.localVariableElement:
+    case ts.ScriptElementKind.variableUsingElement:
+    case ts.ScriptElementKind.variableAwaitUsingElement:
+      return vscode.SymbolKind.Variable
+    case ts.ScriptElementKind.constElement:
+      return vscode.SymbolKind.Constant
+    case ts.ScriptElementKind.letElement:
+      return vscode.SymbolKind.Variable
+    case ts.ScriptElementKind.functionElement:
+    case ts.ScriptElementKind.localFunctionElement:
+      return vscode.SymbolKind.Function
+    case ts.ScriptElementKind.memberFunctionElement:
+      return vscode.SymbolKind.Method
+    case ts.ScriptElementKind.memberVariableElement:
+      return vscode.SymbolKind.Property
+    case ts.ScriptElementKind.memberGetAccessorElement:
+    case ts.ScriptElementKind.memberSetAccessorElement:
+    case ts.ScriptElementKind.memberAccessorVariableElement:
+      return vscode.SymbolKind.Property
+    case ts.ScriptElementKind.constructorImplementationElement:
+      return vscode.SymbolKind.Constructor
+    case ts.ScriptElementKind.callSignatureElement:
+      return vscode.SymbolKind.Function
+    case ts.ScriptElementKind.indexSignatureElement:
+      return vscode.SymbolKind.Key
+    case ts.ScriptElementKind.constructSignatureElement:
+      return vscode.SymbolKind.Constructor
+    case ts.ScriptElementKind.parameterElement:
+      return vscode.SymbolKind.Variable
+    case ts.ScriptElementKind.typeParameterElement:
+      return vscode.SymbolKind.TypeParameter
+    case ts.ScriptElementKind.string:
+      return vscode.SymbolKind.String
+    case ts.ScriptElementKind.primitiveType:
+      return vscode.SymbolKind.TypeParameter
+    case ts.ScriptElementKind.label:
+      return vscode.SymbolKind.Object
+    case ts.ScriptElementKind.alias:
+      return vscode.SymbolKind.Namespace
+    case ts.ScriptElementKind.directory:
+      return vscode.SymbolKind.Package
+    case ts.ScriptElementKind.externalModuleName:
+      return vscode.SymbolKind.Module
+    default:
+      return vscode.SymbolKind.Null
+  }
 }
 
 export function prettifyJSDoc(t: ts.JSDocTagInfo): string {

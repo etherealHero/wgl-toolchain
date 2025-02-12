@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.0.5
+
+- document & workspace symbols (in ScriptModule/Bundle context)
+- extend intellisense utils
+
 ## 0.0.4
 
 - rename symbol (in ScriptModule/Bundle context)
