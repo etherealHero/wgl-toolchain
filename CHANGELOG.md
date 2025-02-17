@@ -1,5 +1,9 @@
 # Change Log
 
+## 0.0.6
+
+- find references & rename Symbol in whole project if Symbol declare in local Bundle context - not in globalScript or lib.d.ts
+
 ## 0.0.5
 
 - document & workspace symbols (in ScriptModule/Bundle context)

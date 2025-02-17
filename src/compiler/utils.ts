@@ -13,6 +13,7 @@ export interface CompileOptions {
   projectRoot: string
   /** All modules which parsed & compiled (local and global modules) */
   modules: string[]
+  skipAttachGlobalScript?: boolean
 }
 
 /**
@@ -49,11 +50,16 @@ export async function parseScriptModule(file: string, projectRoot: string): Prom
     return []
   }
 
-  const ast: AST<TNode> = logtime(parser.parse, content)
-  const astStack: { order: number; n: TNode }[] = []
-  for (const i in ast) astStack.push({ order: Number(i), n: ast[Number(i)] })
-  astStorage.set(fileNormalized, astStack)
-  return ast
+  try {
+    const ast: AST<TNode> = logtime(parser.parse, content)
+    const astStack: { order: number; n: TNode }[] = []
+    for (const i in ast) astStack.push({ order: Number(i), n: ast[Number(i)] })
+    astStorage.set(fileNormalized, astStack)
+    return ast
+  } catch (error) {
+    console.log(`ERROR: ${error} at ${fileNormalized}`)
+    return []
+  }
 }
 
 interface GlobalScriptRaw {

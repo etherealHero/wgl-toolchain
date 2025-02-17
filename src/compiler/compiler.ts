@@ -99,7 +99,7 @@ export async function compile(targetFile: string, opt: CompileOptions): Promise<
   opt.modules.push(targetFileNormalized.toLowerCase())
 
   const chunks: Array<string | SourceNode> = []
-  await attachGlobalScript(targetFile, opt, chunks)
+  if (!opt.skipAttachGlobalScript) await attachGlobalScript(targetFile, opt, chunks)
 
   if (ast.at(-1)?.type === 'breakLine') ast.pop() // remove EOF
   for (const n of ast) {

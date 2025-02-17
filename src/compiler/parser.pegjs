@@ -26,7 +26,9 @@
   }
 }
 
-start = items:(ImportStatement / IncludeStatement / SourceCode)+
+start 
+  = items:(ImportStatement / IncludeStatement / SourceCode)+ 
+  / "" // empty file
 
 ImportStatement
   = "import" (!EOL Spaces)* href:ImportFilePathLiteral (!EOL Spaces)* ";"?
@@ -41,9 +43,9 @@ IncludeFilePathLiteral = "<" chars:([^>\r\n] / "\\" .)* ">" { return chars.join(
 
 // Source Code
 SourceCode
-  = BreakLine / Regions / BackticksStringLiteral / Comment / StatementLine
+  = BreakLine / Regions / Comment / StringLit / StatementLine
 StatementLine
-  = c:(!EOL !SBackticksStringLiteral !SComment !Comment .)+ { return passExpression("statement", text(), location()) }
+  = c:(!EOL !Comment !SComment !StringLit .)+ { return passExpression("statement", text(), location()) }
 BreakLine
   = c:(EOL) { return passExpression("breakLine", text(), location()) }
 
@@ -57,19 +59,46 @@ CommentLine = (!"*/" !EOL .)* { return passRegionLine(text(), location()) }
 SComment = "/*" { return passRegionLine(text(), location()) }
 EComment = "*/" { return passRegionLine(text(), location()) }
 
-// Backticks: `<content>`
-BackticksStringLiteral
-  = t:(SBackticksStringLiteral BackticksStringLiteralLines EBackticksStringLiteral)
-    { return passRegionExpression("backticksStringLiteral", text(), location(), t) }
-BackticksStringLiteralLines
-  = head:BackticksStringLiteralLine tail:(EOL BackticksStringLiteralLine)* { return buildList(head, tail, 1); }
-BackticksStringLiteralLine
-  = (!EBackticksStringLiteral DoubleEscaped / (!EBackticksStringLiteral EscapedBacktick / !EBackticksStringLiteral !EOL .))* 
+StringLit = StringLitSingleQ / StringLitDoubleQ / BackticksStringLit / RegExp
+
+StringLitSingleQ
+  = t:(SEStringLitSingleQ StringLitSingleQLine SEStringLitSingleQ)
+    { return passRegionExpression("stringLitSingleQ", text(), location(), t) }
+StringLitSingleQLine
+  = (!SEStringLitSingleQ DoubleEscaped / (!SEStringLitSingleQ EscapedSingleQ / !SEStringLitSingleQ !EOL .))* 
     { return passRegionLine(text(), location()) }
-DoubleEscaped = "\\" "\\"
+EscapedSingleQ = "\\" !"\\" "'"
+SEStringLitSingleQ = !"\\'" "'" { return passRegionLine(text(), location()) } // start-end string literal
+
+StringLitDoubleQ
+  = t:(SEStringLitDoubleQ StringLitDoubleQLine SEStringLitDoubleQ)
+    { return passRegionExpression("stringLitDoubleQ", text(), location(), t) }
+StringLitDoubleQLine
+  = (!SEStringLitDoubleQ DoubleEscaped / (!SEStringLitDoubleQ EscapedDoubleQ / !SEStringLitDoubleQ !EOL .))* 
+    { return passRegionLine(text(), location()) }
+EscapedDoubleQ = "\\" !"\\" "\""
+SEStringLitDoubleQ = !"\\\"" "\"" { return passRegionLine(text(), location()) }
+
+RegExp
+  = t:(SERegExp RegExpLine SERegExp)
+    { return passRegionExpression("regExp", text(), location(), t) }
+RegExpLine
+  = (!SERegExp DoubleEscaped / (!SERegExp EscapedSlash / !SERegExp !EOL .))* 
+    { return passRegionLine(text(), location()) }
+EscapedSlash = "\\" !"\\" "/"
+SERegExp = !"\\/" !"/*" "/" { return passRegionLine(text(), location()) }
+
+// Backticks: `<content>`
+BackticksStringLit
+  = t:(SEBackticksStringLit BackticksStringLitLines SEBackticksStringLit)
+    { return passRegionExpression("backticksStringLit", text(), location(), t) }
+BackticksStringLitLines
+  = head:BackticksStringLitLine tail:(EOL BackticksStringLitLine)* { return buildList(head, tail, 1); }
+BackticksStringLitLine
+  = (!SEBackticksStringLit DoubleEscaped / (!SEBackticksStringLit EscapedBacktick / !SEBackticksStringLit !EOL .))* 
+    { return passRegionLine(text(), location()) }
 EscapedBacktick = "\\" !"\\" "`"
-SBackticksStringLiteral = !"\\`" "`" { return passRegionLine(text(), location()) }
-EBackticksStringLiteral = !"\\`" "`" { return passRegionLine(text(), location()) }
+SEBackticksStringLit = !"\\`" "`" { return passRegionLine(text(), location()) }
 
 // Regions: #text...#endtext etc.
 Regions = RText / RSql
@@ -90,7 +119,8 @@ RSqlLine = (!"#endsql" !EOL .)* { return passRegionLine(text(), location()) }
 SRSql = (Spaces !EOL)* "#sql" EOL { return passRegionLine(text(), location()) }
 ERSql = (Spaces !EOL)* "#endsql" { return passRegionLine(text(), location()) }
 
-// Space Symbols
+// Symbols
+DoubleEscaped = "\\" "\\"
 EOL "line break"
   = "\n" / "\r\n" / "\r" / "\u2028" / "\u2029"
 Spaces = [ \t\r\n\f]+

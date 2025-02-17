@@ -1,12 +1,14 @@
+import * as fs from 'fs'
 import * as path from 'path'
 import * as sm from 'source-map'
 import * as ts from 'typescript'
 import * as vscode from 'vscode'
 import type * as wgl from './wglscript'
 
+import * as ignore from 'ignore'
 import { compile } from '../compiler/compiler'
-import { normalizePath } from '../compiler/utils'
-import { logtime } from '../utils'
+import { type TNormalizedPath, normalizePath, parseScriptModule } from '../compiler/utils'
+import { getConfigurationOption, logtime } from '../utils'
 import {
   TSElementKindtoVSCodeCompletionItemKind,
   TSElementKindtoVSCodeSymbolKind,
@@ -30,12 +32,6 @@ export async function getDefinitionInfoAtPosition(
   const strWSM = sourceNode.toStringWithSourceMap({
     file: normalizePath(document.fileName, projectRoot)
   })
-
-  // TODO: зависимости можно достать из компиляции (под задачу с кешированием на диск)
-  // async function extractSources() {
-  //   console.log((await new sm.SourceMapConsumer(strWSM.map.toString())).sources)
-  // }
-  // logtime(extractSources)
 
   let bundlePosition: sm.NullablePosition = { line: null, column: null, lastColumn: null }
   await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
@@ -179,7 +175,7 @@ export async function getCompletionsAtPosition(
   )
     return []
 
-  const completions = bundleCompletionInfo.entries.map<vscode.CompletionItem>((e, i) => ({
+  const completions = bundleCompletionInfo.entries.map<vscode.CompletionItem>(e => ({
     label: e.name,
     sortText: e.sortText,
     kind: TSElementKindtoVSCodeCompletionItemKind(e.kind)
@@ -390,18 +386,21 @@ export async function getSignatureHelpItems(
   }
 }
 
+/**
+ * Find All References to a Symbol in ScriptModule/Bundle context
+ * @param document entry TextDocument to compile
+ * @param position position of request
+ * @param projectRoot root system path of project
+ * @param token optional cancellation token
+ * @param source optional normalized path of TextDocument ot override source entry for proxies bundle position ({@link document} - default source)
+ */
 export async function getReferencesAtPosition(
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
-  token?: vscode.CancellationToken
+  token?: vscode.CancellationToken,
+  source?: TNormalizedPath
 ): Promise<wgl.SymbolEntry[]> {
-  // TODO:
-  // 1 находим модуль* в котором определен символ для поиска
-  // 2 находим все модули** где есть в зивисимостях моудль*
-  // 3 во всех модулях** от дефинишена символа ищем референсы и сливаем их
-  // 2* кэшировать АСТ всех модулей на диск
-  // 3* по этой фиче делать прогресс от 0..кол-во обработанных модулей-бандлов
   if (token?.isCancellationRequested) return []
 
   const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
@@ -415,7 +414,7 @@ export async function getReferencesAtPosition(
   let bundlePosition: sm.NullablePosition = { line: null, column: null, lastColumn: null }
   await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
     bundlePosition = consumer.generatedPositionFor({
-      source: normalizePath(document.fileName, projectRoot),
+      source: source ?? normalizePath(document.fileName, projectRoot),
       line: position.line + 1, // vs-code 0-based
       column: position.character
     })
@@ -602,4 +601,300 @@ export async function getNavigationBarItems(
   if (token?.isCancellationRequested) return
 
   return sourceSymbols
+}
+
+/**
+ * Find All References to a Symbol in whole project
+ * @param document entry TextDocument to compile
+ * @param position position of request
+ * @param projectRoot root system path of project
+ * @param token optional cancellation token
+ */
+export async function getReferencesAtPositionInProject(
+  document: Pick<vscode.TextDocument, 'fileName'>,
+  position: Pick<vscode.Position, 'line' | 'character'>,
+  projectRoot: string,
+  token?: vscode.CancellationToken
+): Promise<wgl.SymbolEntry[]> {
+  // TODO: при мутации исходников делать грязной карту зависимостей
+
+  const sourceDefinitionInfo = await getDefinitionInfoAtPosition(
+    document,
+    position,
+    projectRoot,
+    token
+  )
+
+  if (!sourceDefinitionInfo.length) return []
+
+  // 1 глобальный скрипт определен
+  const globalScript = path.join(projectRoot, getConfigurationOption<string>('path'))
+  const globalScriptNormalized = normalizePath(globalScript, projectRoot)
+
+  if (!fs.existsSync(globalScript)) {
+    console.log(
+      `INFO: Global script module ${globalScriptNormalized} not exists. Get references at position in project not available.`
+    )
+    return sourceDefinitionInfo
+  }
+
+  const definition = sourceDefinitionInfo[0]
+
+  // 1.1 дефинишн находится в глобалскрипте
+  if (definition.source === globalScriptNormalized) {
+    return [definition]
+  }
+
+  // 1.2 дефинишн находится в локальном скрипте
+  if (definition.source !== globalScriptNormalized) {
+    const modules = await getModuleReferences(definition.source, projectRoot, token)
+    const projectRefs: wgl.SymbolEntry[] = []
+    let progressState = 0
+    let lastReportedTime = Date.now()
+
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Window,
+        cancellable: true,
+        title: 'WGLToolchain'
+      },
+      async (p, t) => {
+        if (token?.isCancellationRequested || t.isCancellationRequested) return
+
+        const chunks = chunkedArray(modules, 4)
+        for (let i = 0; i < chunks.length; i++) {
+          if (token?.isCancellationRequested || t.isCancellationRequested) break
+
+          await Promise.all(
+            chunks[i].map(async m => {
+              if (token?.isCancellationRequested || t.isCancellationRequested) return
+
+              const refs = await getReferencesAtPosition(
+                { fileName: path.join(projectRoot, m) },
+                { line: definition.line, character: definition.column },
+                projectRoot,
+                token,
+                definition.source
+              )
+
+              progressState++
+              const now = Date.now()
+              if (now - lastReportedTime > 100) {
+                p.report({ message: `process references ${progressState}/${modules.length}` })
+                lastReportedTime = now
+              }
+
+              refs.map(r => {
+                if (token?.isCancellationRequested || t.isCancellationRequested) return
+                if (
+                  !projectRefs.find(
+                    pr =>
+                      pr.source === r.source &&
+                      pr.line === r.line &&
+                      pr.column === r.column &&
+                      pr.length &&
+                      r.length
+                  )
+                )
+                  projectRefs.push({
+                    source: r.source,
+                    line: r.line,
+                    column: r.column,
+                    length: r.length
+                  })
+              })
+            })
+          )
+        }
+      }
+    )
+
+    return projectRefs
+  }
+
+  // 1.3 дефинишн находится в либе .d.ts
+  if (definition.source.match('node_modules\\\\@types')) {
+    return [definition]
+  }
+
+  return [definition]
+}
+
+const moduleReferencesStorage = new Map<TNormalizedPath, TNormalizedPath[]>()
+const modulesWithError = new Set<string>()
+
+/**
+ * Get module references
+ * @param module module to search for links
+ * @param projectRoot root system path of project
+ * @param token optional cancellation token
+ * @returns
+ */
+export async function getModuleReferences(
+  module: TNormalizedPath,
+  projectRoot: string,
+  token?: vscode.CancellationToken,
+  extensionActivate?: true
+): Promise<TNormalizedPath[]> {
+  if (token?.isCancellationRequested) return []
+
+  let scripts: Array<TNormalizedPath> = await getJsFiles(projectRoot)
+
+  if (Array.from(moduleReferencesStorage.keys()).length) {
+    const traversedScripts: Array<TNormalizedPath> = []
+    for (const [_, deps] of moduleReferencesStorage) for (const d of deps) traversedScripts.push(d)
+    scripts = scripts.filter(s => !traversedScripts.includes(s) && !modulesWithError.has(s))
+  }
+
+  const parsingPromises: Array<ReturnType<typeof parseScriptModule>> = []
+  let lastReportedTime = Date.now()
+  let progressState = 0
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Window,
+      cancellable: true,
+      title: 'WGLToolchain'
+    },
+    async (p, t) => {
+      for (let i = 0; i < scripts.length; i++) {
+        if (token?.isCancellationRequested || t.isCancellationRequested) break
+
+        try {
+          parsingPromises.push(
+            parseScriptModule(path.join(projectRoot, scripts[i]), projectRoot).then(ast => {
+              progressState++
+              const now = Date.now()
+              if (now - lastReportedTime > 100) {
+                p.report({
+                  message: `${extensionActivate ? 'Initialize features. ' : ''}Parsing ${progressState}/${scripts.length}`
+                })
+                lastReportedTime = now
+              }
+              return ast
+            })
+          )
+        } catch (error) {
+          modulesWithError.add(scripts[i])
+          console.log(`ERROR: ${error}`)
+        }
+      }
+
+      await Promise.all(parsingPromises)
+    }
+  )
+
+  const globalScript = path.join(projectRoot, getConfigurationOption<string>('path'))
+  const sourceNode = await compile(globalScript, { projectRoot, modules: [] })
+  const strWSM = sourceNode.toStringWithSourceMap({
+    file: getConfigurationOption<string>('path')
+  })
+  const globalDeps = (await new sm.SourceMapConsumer(strWSM.map.toString())).sources
+
+  progressState = 0
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Window,
+      cancellable: true,
+      title: 'WGLToolchain'
+    },
+    async (p, t) => {
+      const chunks = chunkedArray(scripts, 100)
+      for (let j = 0; j < chunks.length; j++) {
+        const chunk = chunks[j]
+        const compilePromises: Array<Promise<1>> = []
+
+        for (let i = 0; i < chunk.length; i++) {
+          if (token?.isCancellationRequested || t.isCancellationRequested) break
+
+          try {
+            compilePromises.push(
+              compile(path.join(projectRoot, chunk[i]), {
+                projectRoot,
+                modules: [...globalDeps],
+                skipAttachGlobalScript: true
+              })
+                .then(sn => sn.toStringWithSourceMap({ file: chunk[i] }))
+                .then(strWSM => new sm.SourceMapConsumer(strWSM.map.toString()))
+                .then(map => {
+                  progressState++
+                  const now = Date.now()
+                  if (now - lastReportedTime > 100) {
+                    p.report({
+                      message: `${extensionActivate ? 'Initialize features. ' : ''}Building ${progressState}/${scripts.length}`
+                    })
+                    lastReportedTime = now
+                  }
+                  const deps = [...map.sources]
+                  map.destroy()
+                  moduleReferencesStorage.set(chunk[i], deps)
+                  return 1
+                })
+            )
+          } catch (error) {
+            modulesWithError.add(chunk[i])
+            console.log(`ERROR: ${error}`)
+          }
+        }
+
+        await Promise.all(compilePromises)
+      }
+    }
+  )
+
+  if (token?.isCancellationRequested) return []
+
+  const moduleReferences: TNormalizedPath[] = []
+
+  for (const [entry, deps] of moduleReferencesStorage)
+    for (const d of deps)
+      if (entry !== d && moduleReferencesStorage.has(d)) moduleReferencesStorage.delete(d)
+
+  for (const [entry, deps] of moduleReferencesStorage)
+    if (deps.find(d => d === module)) moduleReferences.push(entry)
+
+  return moduleReferences
+}
+
+async function getJsFiles(projectRoot: string) {
+  const gitignorePath = path.join(projectRoot, '.gitignore')
+  let ignoreRules: string[] = []
+
+  if (fs.existsSync(gitignorePath)) {
+    ignoreRules = fs.readFileSync(gitignorePath, 'utf8').split('\n')
+  }
+
+  const ig = ignore().add(ignoreRules)
+
+  async function readDirRecursive(dir: string) {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+    let jsFiles: TNormalizedPath[] = []
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name)
+      const relativePath = path.relative(projectRoot, fullPath)
+
+      if (ig.ignores(relativePath)) continue
+
+      if (entry.isDirectory()) {
+        jsFiles = jsFiles.concat(await readDirRecursive(fullPath))
+      } else if (entry.isFile() && path.extname(entry.name) === '.js') {
+        jsFiles.push(relativePath)
+      }
+    }
+
+    return jsFiles
+  }
+
+  return await readDirRecursive(projectRoot)
+}
+
+function chunkedArray<T>(arr: Array<T>, chunkSize: number) {
+  const result = []
+  for (let i = 0; i < arr.length; i += chunkSize) {
+    result.push(arr.slice(i, i + chunkSize))
+  }
+
+  return result
 }

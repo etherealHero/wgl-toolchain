@@ -15,14 +15,7 @@ export function activate(context: vscode.ExtensionContext) {
   } else {
     const projectRoot = wsf[0].uri.fsPath
 
-    vscode.window.withProgress(
-      {
-        title: 'Initialize WGLScript features...',
-        location: vscode.ProgressLocation.Window,
-        cancellable: false
-      },
-      () => attachGlobalScript('plug.js', { projectRoot, modules: [] }, [])
-    )
+    intellisense.getModuleReferences('plug.js', projectRoot, undefined, true)
 
     context.subscriptions.push(
       vscode.workspace.onDidChangeTextDocument(e => {
@@ -221,7 +214,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         let refs: wgl.SymbolEntry[] = []
         try {
-          refs = await intellisense.getReferencesAtPosition(
+          refs = await intellisense.getReferencesAtPositionInProject(
             { fileName: document.fileName },
             position,
             wsPath,
@@ -256,7 +249,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         let refs: wgl.SymbolEntry[] = []
         try {
-          refs = await intellisense.getReferencesAtPosition(
+          refs = await intellisense.getReferencesAtPositionInProject(
             { fileName: document.fileName },
             position,
             wsPath,
