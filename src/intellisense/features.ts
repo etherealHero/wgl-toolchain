@@ -642,10 +642,15 @@ export async function getReferencesAtPositionInProject(
 
   // 1.1 дефинишн находится в глобалскрипте
   if (definition.source === globalScriptNormalized) {
-    return [definition]
+    return await getReferencesAtPosition(document, position, projectRoot, token)
   }
 
-  // 1.2 дефинишн находится в локальном скрипте
+  // 1.2 дефинишн находится в либе .d.ts
+  if (definition.source.match('node_modules\\\\@types')) {
+    return await getReferencesAtPosition(document, position, projectRoot, token)
+  }
+
+  // 1.3 дефинишн находится в локальном скрипте
   if (definition.source !== globalScriptNormalized) {
     const modules = await getModuleReferences(definition.source, projectRoot, token)
     const projectRefs: wgl.SymbolEntry[] = []
@@ -712,12 +717,7 @@ export async function getReferencesAtPositionInProject(
     return projectRefs
   }
 
-  // 1.3 дефинишн находится в либе .d.ts
-  if (definition.source.match('node_modules\\\\@types')) {
-    return [definition]
-  }
-
-  return [definition]
+  return sourceDefinitionInfo
 }
 
 const moduleReferencesStorage = new Map<TNormalizedPath, TNormalizedPath[]>()
