@@ -76,13 +76,16 @@ export async function attachGlobalScript(
   chunks: Array<string | SourceNode>
 ) {
   if (
-    !getConfigurationOption<boolean>('enable') ||
-    getConfigurationOption<string>('path') == null ||
-    getConfigurationOption<string>('path')?.length === 0
+    !getConfigurationOption<boolean>('globalScript.enable') ||
+    getConfigurationOption<string>('globalScript.path') == null ||
+    getConfigurationOption<string>('globalScript.path')?.length === 0
   )
     return
 
-  const globalScript = path.join(opt.projectRoot, getConfigurationOption<string>('path'))
+  const globalScript = path.join(
+    opt.projectRoot,
+    getConfigurationOption<string>('globalScript.path')
+  )
   const globalScriptNormalized = normalizePath(globalScript, opt.projectRoot)
   const targetFileNormalized = normalizePath(targetFile, opt.projectRoot)
 

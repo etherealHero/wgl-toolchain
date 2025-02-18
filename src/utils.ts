@@ -4,12 +4,12 @@ import { createHash } from 'crypto'
 import { workspace } from 'vscode'
 
 export const getConfigurationOption = <T>(option: string): T =>
-  workspace.getConfiguration('wglscript.globalscript').get(option) as T
+  workspace.getConfiguration('wglscript').get(option) as T
 
 export function requestOpenWglScriptWorkspace() {
   vscode.window
     .showWarningMessage(
-      'WGLScript features are not working. You need to open the WGLScript project workspace',
+      'WGLScript features are not working here. You need to open real ScriptModule in active WGLScript project workspace',
       'Open Folder'
     )
     .then(v => {

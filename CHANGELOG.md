@@ -1,8 +1,17 @@
 # Change Log
 
+## 0.0.7
+
+- extension settings & performance
+- vsce package
+- extension icon
+
 ## 0.0.6
 
 - find references & rename Symbol in whole project if Symbol declare in local Bundle context - not in globalScript or lib.d.ts
+- extend parser 
+  - add single, double quote string literal
+  - add regexp
 
 ## 0.0.5
 

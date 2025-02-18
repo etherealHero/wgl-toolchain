@@ -1,8 +1,11 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as tsvfs from '@typescript/vfs'
+import * as ignore from 'ignore'
 import * as ts from 'typescript'
 import * as vscode from 'vscode'
+
+import type { TNormalizedPath } from '../compiler/utils'
 import { getHash, logtime } from '../utils'
 
 /** Bundle file name */
@@ -31,7 +34,8 @@ const VTSEnvStorage: Map<string, tsvfs.VirtualTypeScriptEnvironment> = new Map()
 
 export function getVTSEnv(
   projectRoot: string,
-  bundleContent: string
+  bundleContent: string,
+  cacheEnv?: boolean
 ): tsvfs.VirtualTypeScriptEnvironment {
   const hash = getHash(bundleContent)
 
@@ -39,8 +43,25 @@ export function getVTSEnv(
     return VTSEnvStorage.get(hash) as tsvfs.VirtualTypeScriptEnvironment
   }
 
+  const fsMap = attachFsMap(projectRoot)
+  fsMap.set(bundle, bundleContent)
+
+  const system = tsvfs.createSystem(fsMap)
+  // TODO: последний аргумент customTransformer изучить и прокинуть регистронезависимость для встроенных функций
+  // TODO: сохранять диагностику на CallExpressionAssignment
+  const env = logtime(tsvfs.createVirtualTypeScriptEnvironment, system, [bundle], ts, compilerOpts)
+
+  if (!(cacheEnv === false)) VTSEnvStorage.set(hash, env)
+
+  return env
+}
+
+let fsMap: Map<string, string> | undefined
+
+function attachFsMap(projectRoot: string) {
   // TODO: здесь разобраться и складывать только нужные либы
-  const fsMap = tsvfs.createDefaultMapFromNodeModules(compilerOpts)
+  if (fsMap?.size) return fsMap
+  fsMap = tsvfs.createDefaultMapFromNodeModules(compilerOpts)
 
   try {
     const wgldts = fs.readFileSync(
@@ -63,14 +84,7 @@ export function getVTSEnv(
     }
   }
 
-  fsMap.set(bundle, bundleContent)
-
-  const system = tsvfs.createSystem(fsMap)
-  const env = logtime(tsvfs.createVirtualTypeScriptEnvironment, system, [bundle], ts, compilerOpts)
-
-  VTSEnvStorage.set(hash, env)
-
-  return env
+  return fsMap
 }
 
 export function TSElementKindtoVSCodeCompletionItemKind(
@@ -197,4 +211,58 @@ export function TSElementKindtoVSCodeSymbolKind(el: ts.ScriptElementKind): vscod
 
 export function prettifyJSDoc(t: ts.JSDocTagInfo): string {
   return `_@${t.name}_ ${(t.text || []).map((p, i) => (i ? p.text.replace(/([<>])/g, '\\$1') : `**${p.text.replace(/([<>])/g, '\\$1')}**`)).join('')}`
+}
+
+export function isCancelled(
+  token: undefined | vscode.CancellationToken | (vscode.CancellationToken | undefined)[]
+): boolean {
+  let isCancelled = false
+  if (Array.isArray(token)) {
+    if (token.find(t => t?.isCancellationRequested)) isCancelled = true
+  } else {
+    if (token?.isCancellationRequested) isCancelled = true
+  }
+  return isCancelled
+}
+
+export async function getJsFiles(projectRoot: string) {
+  const gitignorePath = path.join(projectRoot, '.gitignore')
+  let ignoreRules: string[] = []
+
+  if (fs.existsSync(gitignorePath)) {
+    ignoreRules = fs.readFileSync(gitignorePath, 'utf8').split('\n')
+  }
+
+  const ig = ignore().add(ignoreRules)
+
+  async function readDirRecursive(dir: string) {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true })
+    let jsFiles: TNormalizedPath[] = []
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name)
+      const relativePath = path.relative(projectRoot, fullPath)
+
+      if (ig.ignores(relativePath)) continue
+
+      if (entry.isDirectory()) {
+        jsFiles = jsFiles.concat(await readDirRecursive(fullPath))
+      } else if (entry.isFile() && path.extname(entry.name) === '.js') {
+        jsFiles.push(relativePath)
+      }
+    }
+
+    return jsFiles
+  }
+
+  return await readDirRecursive(projectRoot)
+}
+
+export function chunkedArray<T>(arr: Array<T>, chunkSize: number) {
+  const result = []
+  for (let i = 0; i < arr.length; i += chunkSize) {
+    result.push(arr.slice(i, i + chunkSize))
+  }
+
+  return result
 }

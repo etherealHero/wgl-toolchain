@@ -3,8 +3,14 @@ import * as vscode from 'vscode'
 import * as intellisense from './intellisense/features'
 import type * as wgl from './intellisense/wglscript'
 
-import { astStorage, attachGlobalScript, gls, normalizePath } from './compiler/utils'
-import { mapToArray, requestOpenWglScriptWorkspace } from './utils'
+import {
+  type TNormalizedPath,
+  astStorage,
+  attachGlobalScript,
+  gls,
+  normalizePath
+} from './compiler/utils'
+import { getConfigurationOption, mapToArray, requestOpenWglScriptWorkspace } from './utils'
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('Extension "wgl-toolchain" is now active')
@@ -15,7 +21,25 @@ export function activate(context: vscode.ExtensionContext) {
   } else {
     const projectRoot = wsf[0].uri.fsPath
 
-    intellisense.getModuleReferences('plug.js', projectRoot, undefined, true)
+    if (
+      getConfigurationOption<boolean>(
+        'intellisense.workspaceFeatures.renameAllReferencesInProject'
+      ) &&
+      getConfigurationOption<boolean>('intellisense.workspaceFeatures.findAllReferencesInProject')
+    ) {
+      // TODO: обернуть в промис и добавить опцию в настройки с включением фич только после индексации
+      // TODO: переименовать инициализацию в индексацию / собрать нормальный StatusBarItem
+      intellisense.getModuleReferences('plug.js', projectRoot, undefined, true)
+    } else {
+      vscode.window.withProgress(
+        {
+          title: 'WGLToolchain: Initialize features',
+          location: vscode.ProgressLocation.Window,
+          cancellable: false
+        },
+        () => attachGlobalScript('plug.js', { projectRoot, modules: [] }, [])
+      )
+    }
 
     context.subscriptions.push(
       vscode.workspace.onDidChangeTextDocument(e => {
@@ -25,7 +49,16 @@ export function activate(context: vscode.ExtensionContext) {
 
         // TODO: удалять tsvfs инстанс текущего бандла
 
-        if (astStorage.has(normalized)) astStorage.delete(normalized)
+        if (intellisense.modulesWithError.has(normalized)) {
+          intellisense.modulesWithError.delete(normalized)
+        }
+
+        for (const [entry, deps] of intellisense.moduleReferencesStorage)
+          if (deps.find(d => d === normalized)) intellisense.moduleReferencesStorage.delete(entry)
+
+        if (astStorage.has(normalized)) {
+          astStorage.delete(normalized)
+        }
 
         if (gls.code !== '') {
           if (mapToArray(gls.modules).indexOf(normalized.toLowerCase()) === -1) return
@@ -214,12 +247,25 @@ export function activate(context: vscode.ExtensionContext) {
 
         let refs: wgl.SymbolEntry[] = []
         try {
-          refs = await intellisense.getReferencesAtPositionInProject(
-            { fileName: document.fileName },
-            position,
-            wsPath,
-            token
-          )
+          if (
+            getConfigurationOption<boolean>(
+              'intellisense.workspaceFeatures.findAllReferencesInProject'
+            )
+          ) {
+            refs = await intellisense.getReferencesAtPositionInProject(
+              { fileName: document.fileName },
+              position,
+              wsPath,
+              token
+            )
+          } else {
+            refs = await intellisense.getReferencesAtPosition(
+              { fileName: document.fileName },
+              position,
+              wsPath,
+              token
+            )
+          }
         } catch (error) {
           console.log(`ERROR: ${error}`)
           astStorage.clear()
@@ -249,12 +295,25 @@ export function activate(context: vscode.ExtensionContext) {
 
         let refs: wgl.SymbolEntry[] = []
         try {
-          refs = await intellisense.getReferencesAtPositionInProject(
-            { fileName: document.fileName },
-            position,
-            wsPath,
-            token
-          )
+          if (
+            getConfigurationOption<boolean>(
+              'intellisense.workspaceFeatures.renameAllReferencesInProject'
+            )
+          ) {
+            refs = await intellisense.getReferencesAtPositionInProject(
+              { fileName: document.fileName },
+              position,
+              wsPath,
+              token
+            )
+          } else {
+            refs = await intellisense.getReferencesAtPosition(
+              { fileName: document.fileName },
+              position,
+              wsPath,
+              token
+            )
+          }
         } catch (error) {
           console.log(`ERROR: ${error}`)
           astStorage.clear()
