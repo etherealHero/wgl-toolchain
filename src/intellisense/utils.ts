@@ -87,6 +87,21 @@ function attachFsMap(projectRoot: string) {
   return fsMap
 }
 
+export function TSDiagnosticCategoryToVSCodeDiagnosticSeverity(
+  el: ts.DiagnosticCategory
+): vscode.DiagnosticSeverity {
+  switch (el) {
+    case ts.DiagnosticCategory.Error:
+      return vscode.DiagnosticSeverity.Error
+    case ts.DiagnosticCategory.Warning:
+      return vscode.DiagnosticSeverity.Warning
+    case ts.DiagnosticCategory.Message:
+      return vscode.DiagnosticSeverity.Information
+    case ts.DiagnosticCategory.Suggestion:
+      return vscode.DiagnosticSeverity.Hint
+  }
+}
+
 export function TSElementKindtoVSCodeCompletionItemKind(
   el: ts.ScriptElementKind
 ): vscode.CompletionItemKind {

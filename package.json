@@ -2,7 +2,7 @@
   "name": "wgl-toolchain",
   "displayName": "WGLScript toolchain",
   "description": "WGLScript formatter, linter, intellisense for VS Code",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "publisher": "etherealhero",
   "repository": "https://github.com/Microsoft/vscode-extension-samples/wgl-toolchain",
   "keywords": ["wglscript", "LSP", "formatter", "linter", "intellisense"],
@@ -30,11 +30,17 @@
       "type": "object",
       "title": "WGLScript",
       "properties": {
+        "wglscript.intellisense.diagnostics.allowedErrorCodes": {
+          "type": "array",
+          "scope": "resource",
+          "default": [2339, 2367],
+          "markdownDescription": "Convert _error_ codes to _information_ codes by list of [TypeScript Error Codes](https://typescript.tv/errors/). Defaults are **2339** e.g. _Property 'width' does not exist on type 'Shape'_ and **2367** e.g. _This comparison appears to be unintentional because the types 'boolean' and 'number' have no overlap_. You can enter the code to know it, hover on the diagnostic in the script module and in the pop-up prompt copy the code."
+        },
         "wglscript.intellisense.workspaceFeatures.findAllReferencesInProject": {
           "type": "boolean",
           "scope": "resource",
           "default": true,
-          "markdownDescription": "Find all references of Symbol in Project instead refs in local script module context (build from active TextDocument on each language feature request)"
+          "markdownDescription": "TODO: разбить на 3 фичи 1локальныеСимволы 2глобальныеСимволы 3встроенныеСимволы переделать под 'стратегия функции' и на выбор 1поТекущемуСкриптМодулю 2поВсемуПроекту 3поВсемуПроектуСПодтверждением 4поВсемуПроектуСОграничением Find all references of Symbol in Project instead refs in local script module context (build from active TextDocument on each language feature request)"
         },
         "wglscript.intellisense.workspaceFeatures.renameAllReferencesInProject": {
           "type": "boolean",

@@ -1,16 +1,14 @@
 import * as path from 'path'
 import * as vscode from 'vscode'
 import * as intellisense from './intellisense/features'
+
+import { astStorage, attachGlobalScript, gls, normalizePath } from './compiler/utils'
+import { getConfigurationOption, mapToArray, requestOpenWglScriptWorkspace } from './utils'
+
 import type * as wgl from './intellisense/wglscript'
 
-import {
-  type TNormalizedPath,
-  astStorage,
-  attachGlobalScript,
-  gls,
-  normalizePath
-} from './compiler/utils'
-import { getConfigurationOption, mapToArray, requestOpenWglScriptWorkspace } from './utils'
+let diagnosticsCollection: vscode.DiagnosticCollection
+let diagnosticsCollectionBusy = false
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('Extension "wgl-toolchain" is now active')
@@ -41,8 +39,50 @@ export function activate(context: vscode.ExtensionContext) {
       )
     }
 
+    if (vscode.window.activeTextEditor?.document) {
+      const activeDoc = vscode.window.activeTextEditor?.document
+      const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
+
+      if (wsPath) {
+        intellisense
+          .getSemanticDiagnostics({ fileName: activeDoc.fileName }, wsPath, activeDoc.version)
+          .then(diagnostics => {
+            if (!diagnostics) return
+            diagnosticsCollection.clear()
+            for (const [m, d] of diagnostics)
+              diagnosticsCollection.set(vscode.Uri.file(path.join(wsPath, m)), d)
+          })
+      }
+    }
+
     context.subscriptions.push(
-      vscode.workspace.onDidChangeTextDocument(e => {
+      vscode.window.onDidChangeActiveTextEditor(async e => {
+        if (!e) return
+        if (!vscode.window.activeTextEditor) return
+
+        const activeDoc = vscode.window.activeTextEditor.document
+        if (e.document.fileName !== activeDoc.fileName) return
+
+        const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
+        if (!wsPath) return
+        await new Promise(r => setTimeout(r, 1000))
+
+        const diagnostics = await intellisense.getSemanticDiagnostics(
+          { fileName: activeDoc.fileName },
+          wsPath,
+          activeDoc.version
+        )
+
+        if (!diagnostics) return
+
+        diagnosticsCollection.clear()
+        for (const [m, d] of diagnostics)
+          diagnosticsCollection.set(vscode.Uri.file(path.join(wsPath, m)), d)
+      })
+    )
+
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeTextDocument(async e => {
         if (!e.document.isDirty) return // TODO: проверить когда гит откатывается проходит ли триггер
 
         const normalized = normalizePath(e.document.uri.fsPath, projectRoot)
@@ -61,11 +101,37 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         if (gls.code !== '') {
-          if (mapToArray(gls.modules).indexOf(normalized.toLowerCase()) === -1) return
+          if (mapToArray(gls.modules).indexOf(normalized.toLowerCase()) !== -1) {
+            gls.code = ''
+            gls.sourcemap = ''
+            gls.modules = new Map()
+          }
+        }
 
-          gls.code = ''
-          gls.sourcemap = ''
-          gls.modules = new Map()
+        if (vscode.window.activeTextEditor) {
+          const activeDoc = vscode.window.activeTextEditor.document
+          if (e.document.fileName === activeDoc.fileName) {
+            const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
+
+            if (wsPath && !diagnosticsCollectionBusy) {
+              diagnosticsCollectionBusy = true
+              await new Promise(r => setTimeout(r, 2000))
+
+              intellisense
+                .getSemanticDiagnostics(
+                  { fileName: activeDoc.fileName },
+                  wsPath,
+                  e.document.version
+                )
+                .then(diagnostics => {
+                  if (!diagnostics) return
+                  diagnosticsCollection.clear()
+                  for (const [m, d] of diagnostics)
+                    diagnosticsCollection.set(vscode.Uri.file(path.join(wsPath, m)), d)
+                  diagnosticsCollectionBusy = false
+                })
+            }
+          }
         }
       })
     )
@@ -423,7 +489,7 @@ export function activate(context: vscode.ExtensionContext) {
             { fileName: editor.document.fileName },
             wsPath,
             token,
-            true
+            true /** includeWorkspaceSymbols */
           )
         } catch (error) {
           console.log(`ERROR: ${error}`)
@@ -435,4 +501,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   )
+
+  diagnosticsCollection = vscode.languages.createDiagnosticCollection('wglscript')
+  context.subscriptions.push(diagnosticsCollection)
 }

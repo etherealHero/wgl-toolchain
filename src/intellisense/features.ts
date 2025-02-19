@@ -6,9 +6,10 @@ import * as vscode from 'vscode'
 import type * as wgl from './wglscript'
 
 import { compile } from '../compiler/compiler'
-import { type TNormalizedPath, normalizePath, parseScriptModule } from '../compiler/utils'
+import { type TNormalizedPath, gls, normalizePath, parseScriptModule } from '../compiler/utils'
 import { getConfigurationOption, logtime } from '../utils'
 import {
+  TSDiagnosticCategoryToVSCodeDiagnosticSeverity,
   TSElementKindtoVSCodeCompletionItemKind,
   TSElementKindtoVSCodeSymbolKind,
   bundle,
@@ -856,4 +857,109 @@ export async function getModuleReferences(
     if (deps.find(d => d === module)) moduleReferences.push(entry)
 
   return moduleReferences
+}
+
+export async function getSemanticDiagnostics(
+  document: Pick<vscode.TextDocument, 'fileName'>,
+  projectRoot: string,
+  version: number
+): Promise<Map<TNormalizedPath, vscode.Diagnostic[]> | undefined> {
+  if (vscode.window.activeTextEditor?.document.version !== version) return
+
+  const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
+  const documentNormalized = normalizePath(document.fileName, projectRoot)
+
+  if (vscode.window.activeTextEditor?.document.version !== version) return
+
+  const strWSM = sourceNode.toStringWithSourceMap({
+    file: documentNormalized
+  })
+
+  const env = logtime(getVTSEnv, projectRoot, strWSM.code)
+
+  if (vscode.window.activeTextEditor?.document.version !== version) return
+
+  const bundleDiagnostics = logtime(env.languageService.getSemanticDiagnostics, bundle)
+  const sourceDiagnostics = new Map<TNormalizedPath, vscode.Diagnostic[]>()
+  const allowedErrorCodes = getConfigurationOption<number[]>(
+    'intellisense.diagnostics.allowedErrorCodes'
+  )
+  const diagnosticsforConsumer: {
+    code: number
+    message: string
+    category: vscode.DiagnosticSeverity
+    start: ts.LineAndCharacter
+    end: ts.LineAndCharacter
+  }[] = []
+
+  for (const br of bundleDiagnostics) {
+    if (
+      !br.file ||
+      !br.start ||
+      br.file.fileName !== bundle ||
+      !br.length ||
+      br.start < gls.code.length /** location at global script */
+    )
+      continue
+
+    if (vscode.window.activeTextEditor?.document.version !== version) break
+
+    const start = logtime(ts.getLineAndCharacterOfPosition, br.file, br.start)
+    const end = logtime(ts.getLineAndCharacterOfPosition, br.file, br.start + br.length)
+    diagnosticsforConsumer.push({
+      message: typeof br.messageText === 'string' ? br.messageText : br.messageText.messageText,
+      category: allowedErrorCodes.includes(br.code)
+        ? vscode.DiagnosticSeverity.Warning
+        : TSDiagnosticCategoryToVSCodeDiagnosticSeverity(br.category),
+      code: br.code,
+      start,
+      end
+    })
+  }
+
+  if (vscode.window.activeTextEditor?.document.version !== version) return
+
+  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
+    for (const { start, end, category, code, message } of diagnosticsforConsumer) {
+      if (vscode.window.activeTextEditor?.document.version !== version) break
+
+      const sourcePositionStart = consumer.originalPositionFor({
+        line: start.line + 1,
+        column: start.character + 1
+      })
+
+      const sourcePositionEnd = consumer.originalPositionFor({
+        line: end.line + 1,
+        column: end.character + 1
+      })
+
+      if (sourcePositionStart.source == null || sourcePositionStart.line == null) continue
+      if (sourcePositionEnd.source == null || sourcePositionEnd.line == null) continue
+
+      // TODO: сделать опцию в настройках расширения "стратегия запроса диагностик"
+      if (sourcePositionStart.source !== documentNormalized) continue
+
+      if (!sourceDiagnostics.has(sourcePositionStart.source))
+        sourceDiagnostics.set(sourcePositionStart.source, [])
+
+      const entry = sourceDiagnostics.get(sourcePositionStart.source) as vscode.Diagnostic[]
+
+      entry.push({
+        code,
+        message,
+        severity: category,
+        source: 'WGLScript',
+        range: new vscode.Range(
+          sourcePositionStart.line - 1, // vscode 0-based
+          start.character,
+          sourcePositionEnd.line - 1, // vscode 0-based
+          end.character
+        )
+      })
+    }
+  })
+
+  if (vscode.window.activeTextEditor?.document.version !== version) return
+
+  return sourceDiagnostics
 }

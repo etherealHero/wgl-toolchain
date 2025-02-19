@@ -1,5 +1,9 @@
 # Change Log
 
+## 0.0.8
+
+- provide diagnostics
+
 ## 0.0.7
 
 - extension settings & performance
