@@ -3,22 +3,13 @@ import * as path from 'path'
 import * as sm from 'source-map'
 import * as ts from 'typescript'
 import * as vscode from 'vscode'
+import * as cUtils from '../compiler/utils'
+import * as libUtils from '../utils'
+import * as utils from './utils'
+
 import type * as wgl from './wglscript'
 
 import { compile } from '../compiler/compiler'
-import { type TNormalizedPath, gls, normalizePath, parseScriptModule } from '../compiler/utils'
-import { getConfigurationOption, logtime } from '../utils'
-import {
-  TSDiagnosticCategoryToVSCodeDiagnosticSeverity,
-  TSElementKindtoVSCodeCompletionItemKind,
-  TSElementKindtoVSCodeSymbolKind,
-  bundle,
-  chunkedArray,
-  getJsFiles,
-  getVTSEnv,
-  isCancelled,
-  prettifyJSDoc
-} from './utils'
 
 export async function getDefinitionInfoAtPosition(
   document: Pick<vscode.TextDocument, 'fileName'>,
@@ -28,96 +19,73 @@ export async function getDefinitionInfoAtPosition(
 ): Promise<wgl.SymbolEntry[]> {
   if (token?.isCancellationRequested) return []
 
-  const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
+  const sn = await compile(document.fileName, { projectRoot, modules: [] })
 
   if (token?.isCancellationRequested) return []
 
-  const strWSM = sourceNode.toStringWithSourceMap({
-    file: normalizePath(document.fileName, projectRoot)
+  const strWSM = sn.toStringWithSourceMap({
+    file: cUtils.normalizePath(document.fileName, projectRoot)
   })
 
-  let bundlePosition: sm.NullablePosition = { line: null, column: null, lastColumn: null }
+  let pos: sm.NullablePosition = { line: null, column: null, lastColumn: null }
   await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    bundlePosition = consumer.generatedPositionFor({
-      source: normalizePath(document.fileName, projectRoot),
-      line: position.line + 1, // vs-code 0-based
+    pos = consumer.generatedPositionFor({
+      source: cUtils.normalizePath(document.fileName, projectRoot),
+      line: position.line + 1,
       column: position.character
     })
   })
 
-  if (
-    bundlePosition.line == null ||
-    bundlePosition.column == null ||
-    token?.isCancellationRequested
-  )
-    return []
+  if (pos.line == null || pos.column == null || token?.isCancellationRequested) return []
   // ;(await import('fs')).writeFileSync(`${document.fileName}.b.js`, strWSM.code)
 
-  const env = logtime(getVTSEnv, projectRoot, strWSM.code)
+  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
 
   if (token?.isCancellationRequested) return []
 
-  const bundleDefinitionInfo = logtime(
+  const D = libUtils.logtime(
     env.languageService.getDefinitionAtPosition,
-    bundle,
+    utils.bundle,
     ts.getPositionOfLineAndCharacter(
-      env.getSourceFile(bundle) as ts.SourceFileLike,
-      bundlePosition.line - 1, // ts 0-based
+      env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+      pos.line - 1,
       position.character
     )
   )
 
-  if (
-    bundleDefinitionInfo === undefined ||
-    !bundleDefinitionInfo.length ||
-    token?.isCancellationRequested
-  )
-    return []
+  if (D === undefined || !D.length || token?.isCancellationRequested) return []
 
-  const sourceDefinitionInfo: wgl.SymbolEntry[] = []
-  const refsAndPosForConsumer: [ts.DefinitionInfo, ts.LineAndCharacter][] = []
-  for (const di of bundleDefinitionInfo) {
-    const lineAndCharacter = ts.getLineAndCharacterOfPosition(
-      env.getSourceFile(di.fileName) as ts.SourceFileLike,
-      di.textSpan.start
-    )
+  const sourceD: wgl.SymbolEntry[] = []
+  const forConsumer: [ts.DefinitionInfo, ts.LineAndCharacter][] = []
+  for (const di of D) {
+    const sf = env.getSourceFile(di.fileName) as ts.SourceFileLike
+    const lnCh = ts.getLineAndCharacterOfPosition(sf, di.textSpan.start)
 
-    if (di.fileName !== bundle /** lib.d.ts files */) {
-      sourceDefinitionInfo.push({
-        source: path.join('node_modules', '@types', 'wglscript', 'generated', di.fileName),
-        line: lineAndCharacter.line, // vscode 0-based
-        column: lineAndCharacter.character,
-        length: di.textSpan.length
-      })
-    } else {
-      refsAndPosForConsumer.push([di, lineAndCharacter])
+    if (di.fileName === utils.bundle) {
+      forConsumer.push([di, lnCh])
+      continue
     }
+
+    const source = path.join('node_modules', '@types', 'wglscript', 'generated', di.fileName)
+    const { line, character: column } = lnCh
+    sourceD.push({ source, line, column, length: di.textSpan.length })
   }
 
   await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    refsAndPosForConsumer.map(record => {
-      const lineAndCharacter = record[1]
-      const di = record[0]
+    forConsumer.map(record => {
+      const lnCh = record[1]
+      const { line: ln, character: col } = record[1]
+      const length = record[0].textSpan.length
+      const { source, line: orLn } = consumer.originalPositionFor({ line: ln + 1, column: col + 1 })
 
-      const sourcePosition = consumer.originalPositionFor({
-        line: lineAndCharacter.line + 1,
-        column: lineAndCharacter.character + 1
-      })
-
-      if (sourcePosition.source == null || sourcePosition.line == null) return
-
-      sourceDefinitionInfo.push({
-        source: sourcePosition.source,
-        line: sourcePosition.line - 1, // vscode 0-based
-        column: lineAndCharacter.character,
-        length: di.textSpan.length
-      })
+      if (source == null || orLn == null) return
+      sourceD.push({ source, line: orLn - 1, column: lnCh.character, length })
     })
   })
 
   if (token?.isCancellationRequested) return []
 
-  return sourceDefinitionInfo
+  return sourceD
 }
 
 export async function getCompletionsAtPosition(
@@ -133,60 +101,45 @@ export async function getCompletionsAtPosition(
   if (token?.isCancellationRequested) return []
 
   const strWSM = sourceNode.toStringWithSourceMap({
-    file: normalizePath(document.fileName, projectRoot)
+    file: cUtils.normalizePath(document.fileName, projectRoot)
   })
 
-  let bundlePosition: sm.NullablePosition = { line: null, column: null, lastColumn: null }
+  let pos: sm.NullablePosition = { line: null, column: null, lastColumn: null }
   await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    bundlePosition = consumer.generatedPositionFor({
-      source: normalizePath(document.fileName, projectRoot),
-      line: position.line + 1, // vs-code 0-based
+    pos = consumer.generatedPositionFor({
+      source: cUtils.normalizePath(document.fileName, projectRoot),
+      line: position.line + 1,
       column: position.character
     })
   })
 
-  if (
-    bundlePosition.line == null ||
-    bundlePosition.column == null ||
-    token?.isCancellationRequested
-  )
-    return []
-  // ;(await import('fs')).writeFileSync(`${document.fileName}.b.js`, strWSM.code)
+  if (pos.line == null || pos.column == null || token?.isCancellationRequested) return []
 
-  const env = logtime(getVTSEnv, projectRoot, strWSM.code)
+  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
 
   if (token?.isCancellationRequested) return []
 
-  const pos = ts.getPositionOfLineAndCharacter(
-    env.getSourceFile(bundle) as ts.SourceFileLike,
-    bundlePosition.line - 1, // ts 0-based
-    position.character
-  )
-
-  const bundleCompletionInfo = logtime(
+  const C = libUtils.logtime(
     env.languageService.getCompletionsAtPosition,
-    bundle,
-    pos,
+    utils.bundle,
+    ts.getPositionOfLineAndCharacter(
+      env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+      pos.line - 1,
+      position.character
+    ),
     { triggerKind: ts.CompletionTriggerKind.TriggerCharacter },
     ts.getDefaultFormatCodeSettings()
   )
 
-  if (
-    bundleCompletionInfo === undefined ||
-    !bundleCompletionInfo.entries.length ||
-    token?.isCancellationRequested
-  )
-    return []
-
-  const completions = bundleCompletionInfo.entries.map<vscode.CompletionItem>(e => ({
-    label: e.name,
-    sortText: e.sortText,
-    kind: TSElementKindtoVSCodeCompletionItemKind(e.kind)
-  }))
+  if (C === undefined || !C.entries.length || token?.isCancellationRequested) return []
 
   if (token?.isCancellationRequested) []
 
-  return completions
+  return C.entries.map<vscode.CompletionItem>(({ name: label, sortText, kind }) => ({
+    kind: utils.TSElementKindtoVSCodeCompletionItemKind(kind),
+    sortText,
+    label
+  }))
 }
 
 export async function getCompletionEntryDetails(
@@ -199,44 +152,35 @@ export async function getCompletionEntryDetails(
   if (token?.isCancellationRequested) return
 
   const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
+  const strWSM = sourceNode.toStringWithSourceMap({
+    file: cUtils.normalizePath(document.fileName, projectRoot)
+  })
 
   if (token?.isCancellationRequested) return
 
-  const strWSM = sourceNode.toStringWithSourceMap({
-    file: normalizePath(document.fileName, projectRoot)
-  })
-
-  let bundlePosition: sm.NullablePosition = { line: null, column: null, lastColumn: null }
+  let pos: sm.NullablePosition = { line: null, column: null, lastColumn: null }
   await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    bundlePosition = consumer.generatedPositionFor({
-      source: normalizePath(document.fileName, projectRoot),
-      line: position.line + 1, // vs-code 0-based
+    pos = consumer.generatedPositionFor({
+      source: cUtils.normalizePath(document.fileName, projectRoot),
+      line: position.line + 1,
       column: position.character
     })
   })
 
-  if (
-    bundlePosition.line == null ||
-    bundlePosition.column == null ||
-    token?.isCancellationRequested
-  )
-    return
-  // ;(await import('fs')).writeFileSync(`${document.fileName}.b.js`, strWSM.code)
+  if (pos.line == null || pos.column == null || token?.isCancellationRequested) return
 
-  const env = logtime(getVTSEnv, projectRoot, strWSM.code)
+  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
 
   if (token?.isCancellationRequested) return
 
-  const pos = ts.getPositionOfLineAndCharacter(
-    env.getSourceFile(bundle) as ts.SourceFileLike,
-    bundlePosition.line - 1, // ts 0-based
-    position.character
-  )
-
-  const details = logtime(
+  const D = libUtils.logtime(
     env.languageService.getCompletionEntryDetails,
-    bundle,
-    pos,
+    utils.bundle,
+    ts.getPositionOfLineAndCharacter(
+      env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+      pos.line - 1,
+      position.character
+    ),
     completionItemLabel,
     ts.getDefaultFormatCodeSettings(),
     undefined,
@@ -244,16 +188,16 @@ export async function getCompletionEntryDetails(
     undefined
   )
 
-  if (details === undefined || token?.isCancellationRequested) return
+  if (D === undefined || token?.isCancellationRequested) return
 
   return {
-    label: details.name,
-    kind: TSElementKindtoVSCodeCompletionItemKind(details.kind),
-    detail: (details.displayParts || []).map(p => p.text).join(''),
+    label: D.name,
+    kind: utils.TSElementKindtoVSCodeCompletionItemKind(D.kind),
+    detail: (D.displayParts || []).map(p => p.text).join(''),
     documentation: new vscode.MarkdownString()
-      .appendMarkdown((details.documentation || []).map(p => p.text).join(''))
+      .appendMarkdown((D.documentation || []).map(p => p.text).join(''))
       .appendMarkdown('\r\n\r\n')
-      .appendMarkdown((details.tags || []).map(prettifyJSDoc).join('\r\n\r\n'))
+      .appendMarkdown((D.tags || []).map(utils.prettifyJSDoc).join('\r\n\r\n'))
   }
 }
 
@@ -266,52 +210,45 @@ export async function getQuickInfoAtPosition(
   if (token?.isCancellationRequested) return []
 
   const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
+  const strWSM = sourceNode.toStringWithSourceMap({
+    file: cUtils.normalizePath(document.fileName, projectRoot)
+  })
 
   if (token?.isCancellationRequested) return []
 
-  const strWSM = sourceNode.toStringWithSourceMap({
-    file: normalizePath(document.fileName, projectRoot)
-  })
-
-  let bundlePosition: sm.NullablePosition = { line: null, column: null, lastColumn: null }
+  let pos: sm.NullablePosition = { line: null, column: null, lastColumn: null }
   await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    bundlePosition = consumer.generatedPositionFor({
-      source: normalizePath(document.fileName, projectRoot),
-      line: position.line + 1, // vs-code 0-based
+    pos = consumer.generatedPositionFor({
+      source: cUtils.normalizePath(document.fileName, projectRoot),
+      line: position.line + 1,
       column: position.character
     })
   })
 
-  if (
-    bundlePosition.line == null ||
-    bundlePosition.column == null ||
-    token?.isCancellationRequested
-  )
-    return []
-  // ;(await import('fs')).writeFileSync(`${document.fileName}.b.js`, strWSM.code)
+  if (pos.line == null || pos.column == null || token?.isCancellationRequested) return []
 
-  const env = logtime(getVTSEnv, projectRoot, strWSM.code)
+  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
 
   if (token?.isCancellationRequested) return []
 
-  const bundleQuickInfo = logtime(
+  const QI = libUtils.logtime(
     env.languageService.getQuickInfoAtPosition,
-    bundle,
+    utils.bundle,
     ts.getPositionOfLineAndCharacter(
-      env.getSourceFile(bundle) as ts.SourceFileLike,
-      bundlePosition.line - 1, // ts 0-based
+      env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+      pos.line - 1,
       position.character
     )
   )
 
-  if (bundleQuickInfo === undefined || token?.isCancellationRequested) return []
+  if (QI === undefined || token?.isCancellationRequested) return []
 
   return [
     new vscode.MarkdownString()
-      .appendCodeblock((bundleQuickInfo.displayParts || []).map(p => p.text).join(''), 'typescript')
-      .appendMarkdown((bundleQuickInfo.documentation || []).map(p => p.text).join(''))
+      .appendCodeblock((QI.displayParts || []).map(p => p.text).join(''), 'typescript')
+      .appendMarkdown((QI.documentation || []).map(p => p.text).join(''))
       .appendMarkdown('\r\n\r\n')
-      .appendMarkdown((bundleQuickInfo.tags || []).map(prettifyJSDoc).join('\r\n\r\n'))
+      .appendMarkdown((QI.tags || []).map(utils.prettifyJSDoc).join('\r\n\r\n'))
   ]
 }
 
@@ -325,52 +262,43 @@ export async function getSignatureHelpItems(
   if (token?.isCancellationRequested) return
 
   const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
+  const strWSM = sourceNode.toStringWithSourceMap({
+    file: cUtils.normalizePath(document.fileName, projectRoot)
+  })
 
   if (token?.isCancellationRequested) return
 
-  const strWSM = sourceNode.toStringWithSourceMap({
-    file: normalizePath(document.fileName, projectRoot)
-  })
-
-  let bundlePosition: sm.NullablePosition = { line: null, column: null, lastColumn: null }
+  let pos: sm.NullablePosition = { line: null, column: null, lastColumn: null }
   await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    bundlePosition = consumer.generatedPositionFor({
-      source: normalizePath(document.fileName, projectRoot),
-      line: position.line + 1, // vs-code 0-based
+    pos = consumer.generatedPositionFor({
+      source: cUtils.normalizePath(document.fileName, projectRoot),
+      line: position.line + 1,
       column: position.character
     })
   })
 
-  if (
-    bundlePosition.line == null ||
-    bundlePosition.column == null ||
-    token?.isCancellationRequested
-  )
-    return
-  // ;(await import('fs')).writeFileSync(`${document.fileName}.b.js`, strWSM.code)
+  if (pos.line == null || pos.column == null || token?.isCancellationRequested) return
 
-  const env = logtime(getVTSEnv, projectRoot, strWSM.code)
+  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
 
   if (token?.isCancellationRequested) return
 
-  const pos = ts.getPositionOfLineAndCharacter(
-    env.getSourceFile(bundle) as ts.SourceFileLike,
-    bundlePosition.line - 1, // ts 0-based
-    position.character
+  const H = libUtils.logtime(
+    env.languageService.getSignatureHelpItems,
+    utils.bundle,
+    ts.getPositionOfLineAndCharacter(
+      env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+      pos.line - 1,
+      position.character
+    ),
+    {
+      triggerReason: { kind: 'retrigger' }
+    }
   )
 
-  const bundleSignatureHelpItems = logtime(env.languageService.getSignatureHelpItems, bundle, pos, {
-    triggerReason: { kind: 'retrigger' }
-  })
+  if (H === undefined || !H.items.length || token?.isCancellationRequested) return
 
-  if (
-    bundleSignatureHelpItems === undefined ||
-    !bundleSignatureHelpItems.items.length ||
-    token?.isCancellationRequested
-  )
-    return
-
-  const signatures = bundleSignatureHelpItems.items.map<vscode.SignatureInformation>(i => ({
+  const signatures = H.items.map<vscode.SignatureInformation>(i => ({
     label:
       i.prefixDisplayParts.map(p => p.text).join('') +
       i.parameters.map(p => p.displayParts.map(d => d.text).join('')).join(', ') +
@@ -379,13 +307,13 @@ export async function getSignatureHelpItems(
     documentation: new vscode.MarkdownString()
       .appendMarkdown(i.documentation.map(d => d.text).join(''))
       .appendMarkdown('\r\n\r\n')
-      .appendMarkdown(i.tags.map(prettifyJSDoc).join('\r\n\r\n'))
+      .appendMarkdown(i.tags.map(utils.prettifyJSDoc).join('\r\n\r\n'))
   }))
 
   return {
     signatures,
     activeSignature: 0,
-    activeParameter: bundleSignatureHelpItems.argumentIndex
+    activeParameter: H.argumentIndex
   }
 }
 
@@ -402,93 +330,79 @@ export async function getReferencesAtPosition(
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
   token?: undefined | vscode.CancellationToken | (vscode.CancellationToken | undefined)[],
-  source?: TNormalizedPath,
+  source?: cUtils.TNormalizedPath,
   clearVTS?: boolean
 ): Promise<wgl.SymbolEntry[]> {
-  if (isCancelled(token)) return []
+  if (utils.isCancelled(token)) return []
 
   const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
-
-  if (isCancelled(token)) return []
-
   const strWSM = sourceNode.toStringWithSourceMap({
-    file: normalizePath(document.fileName, projectRoot)
+    file: cUtils.normalizePath(document.fileName, projectRoot)
   })
 
-  let bundlePosition: sm.NullablePosition = { line: null, column: null, lastColumn: null }
+  if (utils.isCancelled(token)) return []
+
+  let pos: sm.NullablePosition = { line: null, column: null, lastColumn: null }
   await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    bundlePosition = consumer.generatedPositionFor({
-      source: source ?? normalizePath(document.fileName, projectRoot),
-      line: position.line + 1, // vs-code 0-based
+    pos = consumer.generatedPositionFor({
+      source: source ?? cUtils.normalizePath(document.fileName, projectRoot),
+      line: position.line + 1,
       column: position.character
     })
   })
 
-  if (bundlePosition.line == null || bundlePosition.column == null || isCancelled(token)) return []
-  // ;(await import('fs')).writeFileSync(`${document.fileName}.b.js`, strWSM.code)
+  if (pos.line == null || pos.column == null || utils.isCancelled(token)) return []
 
-  const env = logtime(getVTSEnv, projectRoot, strWSM.code, clearVTS ? false : undefined)
+  const env = libUtils.logtime(
+    utils.getVTSEnv,
+    projectRoot,
+    strWSM.code,
+    clearVTS ? false : undefined
+  )
 
-  if (isCancelled(token)) return []
+  if (utils.isCancelled(token)) return []
 
-  const bundleReferenceEntries = logtime(
+  const R = libUtils.logtime(
     env.languageService.getReferencesAtPosition,
-    bundle,
+    utils.bundle,
     ts.getPositionOfLineAndCharacter(
-      env.getSourceFile(bundle) as ts.SourceFileLike,
-      bundlePosition.line - 1, // ts 0-based
+      env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+      pos.line - 1,
       position.character
     )
   )
 
-  if (bundleReferenceEntries === undefined || !bundleReferenceEntries.length || isCancelled(token))
-    return []
+  if (R === undefined || !R.length || utils.isCancelled(token)) return []
 
-  const sourceEntries: wgl.SymbolEntry[] = []
-  const refsAndPosForConsumer: [ts.ReferenceEntry, ts.LineAndCharacter][] = []
-  for (const br of bundleReferenceEntries) {
-    const lineAndCharacter = logtime(
-      ts.getLineAndCharacterOfPosition,
-      env.getSourceFile(br.fileName) as ts.SourceFileLike,
-      br.textSpan.start
-    )
+  const sourceR: wgl.SymbolEntry[] = []
+  const forConsumer: [ts.ReferenceEntry, ts.LineAndCharacter][] = []
+  for (const br of R) {
+    const sf = env.getSourceFile(br.fileName) as ts.SourceFileLike
+    const lnCh = libUtils.logtime(ts.getLineAndCharacterOfPosition, sf, br.textSpan.start)
 
-    if (br.fileName !== bundle /** lib.d.ts files */) {
-      sourceEntries.push({
-        source: path.join('node_modules', '@types', 'wglscript', 'generated', br.fileName),
-        line: lineAndCharacter.line, // vscode 0-based
-        column: lineAndCharacter.character,
-        length: br.textSpan.length
-      })
+    if (br.fileName === utils.bundle) {
+      forConsumer.push([br, lnCh])
     } else {
-      refsAndPosForConsumer.push([br, lineAndCharacter])
+      const { line, character: column } = lnCh
+      const source = path.join('node_modules', '@types', 'wglscript', 'generated', br.fileName)
+      sourceR.push({ source, line, column, length: br.textSpan.length })
     }
   }
 
   await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    refsAndPosForConsumer.map(record => {
-      const lineAndCharacter = record[1]
-      const br = record[0]
+    forConsumer.map(record => {
+      const length = record[0].textSpan.length
+      const { line: ln, character: column } = record[1]
+      const { line, source } = consumer.originalPositionFor({ line: ln + 1, column: column + 1 })
 
-      const sourcePosition = consumer.originalPositionFor({
-        line: lineAndCharacter.line + 1,
-        column: lineAndCharacter.character + 1
-      })
-
-      if (sourcePosition.source == null || sourcePosition.line == null) return
-
-      sourceEntries.push({
-        source: sourcePosition.source,
-        line: sourcePosition.line - 1, // vscode 0-based
-        column: lineAndCharacter.character,
-        length: br.textSpan.length
-      })
+      if (source == null || line == null) return
+      sourceR.push({ source, column, length, line: line - 1 })
     })
   })
 
-  if (isCancelled(token)) return []
+  if (utils.isCancelled(token)) return []
 
-  return sourceEntries
+  return sourceR
 }
 
 export async function getNavigationBarItems(
@@ -500,29 +414,20 @@ export async function getNavigationBarItems(
   if (token?.isCancellationRequested) return
 
   const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
-  const documentNormalized = normalizePath(document.fileName, projectRoot)
-
-  if (token?.isCancellationRequested) return
-
+  const documentN = cUtils.normalizePath(document.fileName, projectRoot)
   const strWSM = sourceNode.toStringWithSourceMap({
-    file: normalizePath(document.fileName, projectRoot)
+    file: cUtils.normalizePath(document.fileName, projectRoot)
   })
 
-  const env = logtime(getVTSEnv, projectRoot, strWSM.code)
-
   if (token?.isCancellationRequested) return
 
-  const bundleNavigationTree = [logtime(env.languageService.getNavigationTree, bundle)]
+  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
+  const NT = [libUtils.logtime(env.languageService.getNavigationTree, utils.bundle)]
 
-  if (
-    bundleNavigationTree === undefined ||
-    !bundleNavigationTree.length ||
-    token?.isCancellationRequested
-  )
-    return
+  if (NT === undefined || !NT.length || token?.isCancellationRequested) return
 
   const sourceSymbols: vscode.SymbolInformation[] = []
-  const refsAndPosForConsumer: Array<{
+  const forConsumer: Array<{
     item: ts.NavigationTree
     start: ts.LineAndCharacter
     end: ts.LineAndCharacter
@@ -536,57 +441,46 @@ export async function getNavigationBarItems(
       const pos = item.spans.at(0)
 
       if (pos) {
-        const start = ts.getLineAndCharacterOfPosition(
-          env.getSourceFile(bundle) as ts.SourceFileLike,
-          pos.start
-        )
-        const end = ts.getLineAndCharacterOfPosition(
-          env.getSourceFile(bundle) as ts.SourceFileLike,
-          pos.start + pos.length
-        )
-
-        container && refsAndPosForConsumer.push({ item, start, end, container })
+        const sf = env.getSourceFile(utils.bundle) as ts.SourceFileLike
+        const start = ts.getLineAndCharacterOfPosition(sf, pos.start)
+        const end = ts.getLineAndCharacterOfPosition(sf, pos.start + pos.length)
+        container && forConsumer.push({ item, start, end, container })
       }
 
       if (item.childItems) collectNavBarItemsWithLineAndCharacter(item.childItems, item.text)
     }
   }
 
-  collectNavBarItemsWithLineAndCharacter(bundleNavigationTree)
+  collectNavBarItemsWithLineAndCharacter(NT)
 
   await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    refsAndPosForConsumer.map(r => {
+    forConsumer.map(({ start, end, item, container }) => {
       if (token?.isCancellationRequested) return
 
-      const sourcePositionStart = consumer.originalPositionFor({
-        line: r.start.line + 1,
-        column: r.start.character + 1
+      const posS = consumer.originalPositionFor({
+        line: start.line + 1,
+        column: start.character + 1
       })
 
-      if (sourcePositionStart.source == null || sourcePositionStart.line == null) return
-      if (sourcePositionStart.source !== documentNormalized && !includeWorkspaceSymbols) return
+      if (posS.source == null || posS.line == null) return
+      if (posS.source !== documentN && !includeWorkspaceSymbols) return
 
-      const sourcePositionEnd = consumer.originalPositionFor({
-        line: r.end.line + 1,
-        column: r.end.character + 1
+      const posE = consumer.originalPositionFor({
+        line: end.line + 1,
+        column: end.character + 1
       })
 
-      if (sourcePositionEnd.source == null || sourcePositionEnd.line == null) return
-      if (sourcePositionEnd.source !== documentNormalized && !includeWorkspaceSymbols) return
+      if (posE.source == null || posE.line == null) return
+      if (posE.source !== documentN && !includeWorkspaceSymbols) return
 
       sourceSymbols.push(
         new vscode.SymbolInformation(
-          r.item.text,
-          TSElementKindtoVSCodeSymbolKind(r.item.kind),
-          r.container ?? '',
+          item.text,
+          utils.TSElementKindtoVSCodeSymbolKind(item.kind),
+          container ?? '',
           new vscode.Location(
-            vscode.Uri.file(path.join(projectRoot, sourcePositionStart.source)),
-            new vscode.Range(
-              sourcePositionStart.line - 1, // vscode 0-based
-              r.start.character,
-              sourcePositionEnd.line - 1, // vscode 0-based
-              r.end.character
-            )
+            vscode.Uri.file(path.join(projectRoot, posS.source)),
+            new vscode.Range(posS.line - 1, start.character, posE.line - 1, end.character)
           )
         )
       )
@@ -611,62 +505,57 @@ export async function getReferencesAtPositionInProject(
   projectRoot: string,
   token?: vscode.CancellationToken
 ): Promise<wgl.SymbolEntry[]> {
-  const sourceDefinitionInfo = await getDefinitionInfoAtPosition(
-    document,
-    position,
-    projectRoot,
-    token
-  )
+  const definitions = await getDefinitionInfoAtPosition(document, position, projectRoot, token)
 
-  if (!sourceDefinitionInfo.length || isCancelled(token)) return []
+  if (!definitions.length || utils.isCancelled(token)) return []
 
   // 1 глобальный скрипт определен
-  const globalScript = path.join(projectRoot, getConfigurationOption<string>('globalScript.path'))
-  const globalScriptNormalized = normalizePath(globalScript, projectRoot)
+  const globalScript = path.join(projectRoot, libUtils.getExtOption<string>('globalScript.path'))
+  const globalScriptN = cUtils.normalizePath(globalScript, projectRoot)
 
   if (!fs.existsSync(globalScript)) {
     console.log(
-      `INFO: Global script module ${globalScriptNormalized} not exists. Get references at position in project not available.`
+      `INFO: Global script module ${globalScriptN} not exists. Get references at position in project not available.`
     )
-    return sourceDefinitionInfo
+    return definitions
   }
 
   const sourceNode = await compile(globalScript, { projectRoot, modules: [] })
   const strWSM = sourceNode.toStringWithSourceMap({
-    file: getConfigurationOption<string>('globalScript.path')
+    file: libUtils.getExtOption<string>('globalScript.path')
   })
   const globalDeps = (await new sm.SourceMapConsumer(strWSM.map.toString())).sources
-  const definition = sourceDefinitionInfo[0]
+  const D = definitions[0]
 
   // 1.1 дефинишн находится в либе .d.ts
-  if (definition.source.match('node_modules\\\\@types')) {
+  if (D.source.match('node_modules\\\\@types')) {
     // TODO: обратно запроксировать позицию в tsvfs (=> /lib.d.ts), поднять референсы также как в других флоу ниже
     return await getReferencesAtPosition(document, position, projectRoot, token)
   }
 
-  let modules: TNormalizedPath[]
-  if (globalDeps.includes(definition.source)) {
+  let modules: cUtils.TNormalizedPath[]
+  if (globalDeps.includes(D.source)) {
     // 1.2 дефинишн находится в глобалскрипте
     // TODO: фильтруем скрипты по матчу наименования символа в контенте файла (!Регистрозависимо)
     modules = Array.from(moduleReferencesStorage.keys())
   } else {
     // 1.3 дефинишн находится в локальном скрипте
-    modules = await getModuleReferences(definition.source, projectRoot, token)
+    modules = await getModuleReferences(D.source, projectRoot, token)
   }
 
-  const modulesLength = modules.length
-  const sliceModuleReferencesLength = getConfigurationOption<number>(
-    'intellisense.workspaceFeatures.sliceModuleReferencesLength'
+  const modulesLen = modules.length
+  const extModulesLenOption = libUtils.getExtOption<number>(
+    'intellisense.requestDepthStrategy.sliceModuleReferencesLength'
   )
 
   let postfix = ''
-  if (modulesLength > sliceModuleReferencesLength) {
-    modules = chunkedArray(modules, sliceModuleReferencesLength)[0]
-    postfix = ` (${modulesLength - modules.length} skipped)`
+  if (modulesLen > extModulesLenOption) {
+    modules = utils.chunkedArray(modules, extModulesLenOption)[0]
+    postfix = ` (${modulesLen - modules.length} skipped)`
   }
 
   const projectRefs = new Set<string>()
-  let progressState = 0
+  let state = 0
   let lastReportedTime = Date.now()
 
   await vscode.window.withProgress(
@@ -676,57 +565,45 @@ export async function getReferencesAtPositionInProject(
       title: 'WGLToolchain'
     },
     async (p, t) => {
-      if (isCancelled([token, t])) return
+      if (utils.isCancelled([token, t])) return
 
-      p.report({
-        message: `Processing script modules ${progressState}/${modules.length}${postfix}`
-      })
-      const threads = getConfigurationOption<number>('intellisense.tsvfsThreads')
+      p.report({ message: `Processing script modules ${state}/${modules.length}${postfix}` })
+      const threads = libUtils.getExtOption<number>('intellisense.typescriptThreads')
 
-      for (const chunk of chunkedArray(modules, threads)) {
-        if (isCancelled([token, t])) break
+      for (const chunk of utils.chunkedArray(modules, threads)) {
+        if (utils.isCancelled([token, t])) break
         await Promise.all(
           chunk.map(async module => {
-            if (isCancelled([token, t])) return
+            if (utils.isCancelled([token, t])) return
 
-            for (const ref of await getReferencesAtPosition(
+            for (const { source, line, column, length } of await getReferencesAtPosition(
               { fileName: path.join(projectRoot, module) },
-              { line: definition.line, character: definition.column },
+              { line: D.line, character: D.column },
               projectRoot,
               [token, t],
-              definition.source,
+              D.source,
               true /** clear VTS after request */
             )) {
-              if (isCancelled([token, t])) break
-              projectRefs.add(
-                JSON.stringify({
-                  source: ref.source,
-                  line: ref.line,
-                  column: ref.column,
-                  length: ref.length
-                })
-              )
+              if (utils.isCancelled([token, t])) break
+              projectRefs.add(JSON.stringify({ source, line, column, length }))
             }
 
-            progressState++
+            state++
             const now = Date.now()
-            if (now - lastReportedTime > 200) {
-              p.report({
-                message: `Processing script modules ${progressState}/${modules.length}${postfix}`
-              })
-              lastReportedTime = now
-            }
+            if (!(now - lastReportedTime > 200)) return
+            p.report({ message: `Processing script modules ${state}/${modules.length}${postfix}` })
+            lastReportedTime = now
           })
         )
       }
     }
   )
 
-  if (isCancelled(token)) return []
+  if (utils.isCancelled(token)) return []
   return Array.from(projectRefs.values()).map<wgl.SymbolEntry>(r => JSON.parse(r))
 }
 
-export const moduleReferencesStorage = new Map<TNormalizedPath, TNormalizedPath[]>()
+export const moduleReferencesStorage = new Map<cUtils.TNormalizedPath, cUtils.TNormalizedPath[]>()
 export const modulesWithError = new Set<string>()
 
 /**
@@ -737,23 +614,23 @@ export const modulesWithError = new Set<string>()
  * @returns
  */
 export async function getModuleReferences(
-  module: TNormalizedPath,
+  module: cUtils.TNormalizedPath,
   projectRoot: string,
   token?: vscode.CancellationToken,
-  extensionActivate?: true
-): Promise<TNormalizedPath[]> {
+  init?: true
+): Promise<cUtils.TNormalizedPath[]> {
   if (token?.isCancellationRequested) return []
 
-  let scripts: Array<TNormalizedPath> = await getJsFiles(projectRoot)
+  let scripts: Array<cUtils.TNormalizedPath> = await utils.getJsFiles(projectRoot)
 
   if (moduleReferencesStorage.size) {
-    const traversedScripts: Array<TNormalizedPath> = []
+    const traversedScripts: Array<cUtils.TNormalizedPath> = []
     for (const [_, deps] of moduleReferencesStorage) for (const d of deps) traversedScripts.push(d)
     scripts = scripts.filter(s => !traversedScripts.includes(s) && !modulesWithError.has(s))
   }
 
   let lastReportedTime = Date.now()
-  let progressState = 0
+  let state = 0
 
   await vscode.window.withProgress(
     {
@@ -764,18 +641,18 @@ export async function getModuleReferences(
     async (p, t) => {
       await Promise.all(
         scripts.map(s =>
-          isCancelled([token, t])
+          utils.isCancelled([token, t])
             ? null
-            : parseScriptModule(path.join(projectRoot, s), projectRoot)
+            : cUtils
+                .parseScriptModule(path.join(projectRoot, s), projectRoot)
                 .then(() => {
-                  progressState++
+                  state++
                   const now = Date.now()
-                  if (now - lastReportedTime > 200) {
-                    p.report({
-                      message: `${extensionActivate ? 'Initialize features. ' : ''}Parsing ${progressState}/${scripts.length}`
-                    })
-                    lastReportedTime = now
-                  }
+                  if (!(now - lastReportedTime > 200)) return
+                  p.report({
+                    message: `${init ? 'Initialize features. ' : ''}Parsing ${state}/${scripts.length}`
+                  })
+                  lastReportedTime = now
                 })
                 .catch(error => {
                   modulesWithError.add(s)
@@ -793,27 +670,27 @@ export async function getModuleReferences(
       title: 'WGLToolchain'
     },
     async (p, t) => {
-      progressState = 0
+      state = 0
       p.report({
-        message: `${extensionActivate ? 'Initialize features. ' : ''}Building ${progressState}/${scripts.length}`
+        message: `${init ? 'Initialize features. ' : ''}Building ${state}/${scripts.length}`
       })
 
       const globalScript = path.join(
         projectRoot,
-        getConfigurationOption<string>('globalScript.path')
+        libUtils.getExtOption<string>('globalScript.path')
       )
       const sourceNode = await compile(globalScript, { projectRoot, modules: [] })
       const strWSM = sourceNode.toStringWithSourceMap({
-        file: getConfigurationOption<string>('globalScript.path')
+        file: libUtils.getExtOption<string>('globalScript.path')
       })
       const globalDeps = (await new sm.SourceMapConsumer(strWSM.map.toString())).sources
-      const threads = getConfigurationOption<number>('intellisense.buildThreads')
+      const threads = libUtils.getExtOption<number>('intellisense.buildThreads')
 
-      for (const chunk of chunkedArray(scripts, threads)) {
-        if (isCancelled([token, t])) break
+      for (const chunk of utils.chunkedArray(scripts, threads)) {
+        if (utils.isCancelled([token, t])) break
         await Promise.all(
           chunk.map(script =>
-            isCancelled([token, t])
+            utils.isCancelled([token, t])
               ? null
               : compile(path.join(projectRoot, script), {
                   projectRoot,
@@ -823,11 +700,11 @@ export async function getModuleReferences(
                   .then(sn => sn.toStringWithSourceMap({ file: script }))
                   .then(strWSM => new sm.SourceMapConsumer(strWSM.map.toString()))
                   .then(map => {
-                    progressState++
+                    state++
                     const now = Date.now()
                     if (now - lastReportedTime > 200) {
                       p.report({
-                        message: `${extensionActivate ? 'Initialize features. ' : ''}Building ${progressState}/${scripts.length}`
+                        message: `${init ? 'Initialize features. ' : ''}Building ${state}/${scripts.length}`
                       })
                       lastReportedTime = now
                     }
@@ -847,7 +724,7 @@ export async function getModuleReferences(
 
   if (token?.isCancellationRequested) return []
 
-  const moduleReferences: TNormalizedPath[] = []
+  const moduleReferences: cUtils.TNormalizedPath[] = []
 
   for (const [entry, deps] of moduleReferencesStorage)
     for (const d of deps)
@@ -863,28 +740,25 @@ export async function getSemanticDiagnostics(
   document: Pick<vscode.TextDocument, 'fileName'>,
   projectRoot: string,
   version: number
-): Promise<Map<TNormalizedPath, vscode.Diagnostic[]> | undefined> {
+): Promise<Map<cUtils.TNormalizedPath, vscode.Diagnostic[]> | undefined> {
   if (vscode.window.activeTextEditor?.document.version !== version) return
 
   const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
-  const documentNormalized = normalizePath(document.fileName, projectRoot)
+  const documentN = cUtils.normalizePath(document.fileName, projectRoot)
 
   if (vscode.window.activeTextEditor?.document.version !== version) return
 
-  const strWSM = sourceNode.toStringWithSourceMap({
-    file: documentNormalized
-  })
-
-  const env = logtime(getVTSEnv, projectRoot, strWSM.code)
+  const strWSM = sourceNode.toStringWithSourceMap({ file: documentN })
+  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
 
   if (vscode.window.activeTextEditor?.document.version !== version) return
 
-  const bundleDiagnostics = logtime(env.languageService.getSemanticDiagnostics, bundle)
-  const sourceDiagnostics = new Map<TNormalizedPath, vscode.Diagnostic[]>()
-  const allowedErrorCodes = getConfigurationOption<number[]>(
+  const D = libUtils.logtime(env.languageService.getSemanticDiagnostics, utils.bundle)
+  const sourceD = new Map<cUtils.TNormalizedPath, vscode.Diagnostic[]>()
+  const allowedErrorCodes = libUtils.getExtOption<number[]>(
     'intellisense.diagnostics.allowedErrorCodes'
   )
-  const diagnosticsforConsumer: {
+  const forConsumer: {
     code: number
     message: string
     category: vscode.DiagnosticSeverity
@@ -892,26 +766,26 @@ export async function getSemanticDiagnostics(
     end: ts.LineAndCharacter
   }[] = []
 
-  for (const br of bundleDiagnostics) {
+  for (const d of D) {
     if (
-      !br.file ||
-      !br.start ||
-      br.file.fileName !== bundle ||
-      !br.length ||
-      br.start < gls.code.length /** location at global script */
+      !d.file ||
+      !d.start ||
+      d.file.fileName !== utils.bundle ||
+      !d.length ||
+      d.start < cUtils.gls.code.length /** location at global script */
     )
       continue
 
     if (vscode.window.activeTextEditor?.document.version !== version) break
 
-    const start = logtime(ts.getLineAndCharacterOfPosition, br.file, br.start)
-    const end = logtime(ts.getLineAndCharacterOfPosition, br.file, br.start + br.length)
-    diagnosticsforConsumer.push({
-      message: typeof br.messageText === 'string' ? br.messageText : br.messageText.messageText,
-      category: allowedErrorCodes.includes(br.code)
+    const start = libUtils.logtime(ts.getLineAndCharacterOfPosition, d.file, d.start)
+    const end = libUtils.logtime(ts.getLineAndCharacterOfPosition, d.file, d.start + d.length)
+    forConsumer.push({
+      message: typeof d.messageText === 'string' ? d.messageText : d.messageText.messageText,
+      category: allowedErrorCodes.includes(d.code)
         ? vscode.DiagnosticSeverity.Warning
-        : TSDiagnosticCategoryToVSCodeDiagnosticSeverity(br.category),
-      code: br.code,
+        : utils.TSDiagnosticCategoryToVSCodeDiagnosticSeverity(d.category),
+      code: d.code,
       start,
       end
     })
@@ -920,46 +794,40 @@ export async function getSemanticDiagnostics(
   if (vscode.window.activeTextEditor?.document.version !== version) return
 
   await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    for (const { start, end, category, code, message } of diagnosticsforConsumer) {
+    for (const { start, end, category, code, message } of forConsumer) {
       if (vscode.window.activeTextEditor?.document.version !== version) break
 
-      const sourcePositionStart = consumer.originalPositionFor({
+      const posS = consumer.originalPositionFor({
         line: start.line + 1,
         column: start.character + 1
       })
 
-      const sourcePositionEnd = consumer.originalPositionFor({
+      const posE = consumer.originalPositionFor({
         line: end.line + 1,
         column: end.character + 1
       })
 
-      if (sourcePositionStart.source == null || sourcePositionStart.line == null) continue
-      if (sourcePositionEnd.source == null || sourcePositionEnd.line == null) continue
+      if (posS.source == null || posS.line == null) continue
+      if (posE.source == null || posE.line == null) continue
 
       // TODO: сделать опцию в настройках расширения "стратегия запроса диагностик"
-      if (sourcePositionStart.source !== documentNormalized) continue
+      if (posS.source !== documentN) continue
 
-      if (!sourceDiagnostics.has(sourcePositionStart.source))
-        sourceDiagnostics.set(sourcePositionStart.source, [])
+      if (!sourceD.has(posS.source)) sourceD.set(posS.source, [])
 
-      const entry = sourceDiagnostics.get(sourcePositionStart.source) as vscode.Diagnostic[]
+      const entry = sourceD.get(posS.source) as vscode.Diagnostic[]
 
       entry.push({
         code,
         message,
         severity: category,
         source: 'WGLScript',
-        range: new vscode.Range(
-          sourcePositionStart.line - 1, // vscode 0-based
-          start.character,
-          sourcePositionEnd.line - 1, // vscode 0-based
-          end.character
-        )
+        range: new vscode.Range(posS.line - 1, start.character, posE.line - 1, end.character)
       })
     }
   })
 
   if (vscode.window.activeTextEditor?.document.version !== version) return
 
-  return sourceDiagnostics
+  return sourceD
 }

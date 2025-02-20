@@ -33,8 +33,49 @@
         "wglscript.intellisense.diagnostics.allowedErrorCodes": {
           "type": "array",
           "scope": "resource",
-          "default": [2339, 2367],
-          "markdownDescription": "Convert _error_ codes to _information_ codes by list of [TypeScript Error Codes](https://typescript.tv/errors/). Defaults are **2339** e.g. _Property 'width' does not exist on type 'Shape'_ and **2367** e.g. _This comparison appears to be unintentional because the types 'boolean' and 'number' have no overlap_. You can enter the code to know it, hover on the diagnostic in the script module and in the pop-up prompt copy the code."
+          "default": [2339, 2367, 7006],
+          "markdownDescription": "Cast _error_ diagnostics to _warning_ diagnostics by list of [TypeScript Error Codes](https://typescript.tv/errors/). You can enter the code to know it, hover on the diagnostic in the document and in the pop-up prompt copy the code. Defaults are \n\n**2339**: _Property 'width' does not exist on type 'Shape'_\n\n**2367**: _This comparison appears to be unintentional because the types 'boolean' and 'number' have no overlap_\n\n**7006**: Parameter 'person' implicitly has an 'any' type"
+        },
+        "wglscript.intellisense.requestDepthStrategy.localSymbols": {
+          "type": "string",
+          "enum": ["bundle", "project"],
+          "markdownEnumDescriptions": [
+            "Search local Symbol only in bundle of current script module",
+            "Search local Symbol in whole project"
+          ],
+          "enumItemLabels": ["Bundle scope", "Project"],
+          "default": "project",
+          "markdownDescription": "The request processing strategy (find all references, rename features) in the Intelligent Service for Symbol that **not defined** in the global script module"
+        },
+        "wglscript.intellisense.requestDepthStrategy.globalSymbols": {
+          "type": "string",
+          "enum": ["bundle", "project"],
+          "markdownEnumDescriptions": [
+            "Search global Symbol only in bundle of current script module",
+            "Search global Symbol in whole project"
+          ],
+          "enumItemLabels": ["Bundle scope", "Project"],
+          "default": "bundle",
+          "markdownDescription": "The request processing strategy (find all references, rename features) in the Intelligent Service for Symbol that **defined** in the global script module"
+        },
+        "wglscript.intellisense.requestDepthStrategy.librarySymbols": {
+          "type": "string",
+          "enum": ["bundle", "project"],
+          "markdownEnumDescriptions": [
+            "Search library Symbol only in bundle of current script module",
+            "Search library Symbol in whole project"
+          ],
+          "enumItemLabels": ["Bundle scope", "Project"],
+          "default": "bundle",
+          "markdownDescription": "The request processing strategy (find all references, rename features) in the Intelligent Service for Symbol that **defined** in d.ts files (node_modules/@types)"
+        },
+        "wglscript.intellisense.requestDepthStrategy.sliceModuleReferencesLength": {
+          "type": "integer",
+          "scope": "resource",
+          "minimum": 10,
+          "maximum": 5000,
+          "default": 20,
+          "markdownDescription": "Cut the list of modules to a specified **length** where the Symbol is mentioned for [find all References in Project](#wglscript.intellisense.workspaceFeatures.findAllReferencesInProject) or [rename all References in Project](#wglscript.intellisense.workspaceFeatures.renameAllReferencesInProject). If both workspace features are disabled this option has no effect. Reduce for _speed up_ processing **find all references, rename info**. **Warning** This option purposely cuts potentially useful links."
         },
         "wglscript.intellisense.workspaceFeatures.findAllReferencesInProject": {
           "type": "boolean",
@@ -48,14 +89,6 @@
           "default": true,
           "markdownDescription": "Rename all references of Symbol in Project instead refs in local script module context (build from active TextDocument on each language feature request)"
         },
-        "wglscript.intellisense.workspaceFeatures.sliceModuleReferencesLength": {
-          "type": "integer",
-          "scope": "resource",
-          "minimum": 10,
-          "maximum": 5000,
-          "default": 20,
-          "markdownDescription": "Cut the list of modules to a specified **length** where the Symbol is mentioned for [find all References in Project](#wglscript.intellisense.workspaceFeatures.findAllReferencesInProject) or [rename all References in Project](#wglscript.intellisense.workspaceFeatures.renameAllReferencesInProject). If both workspace features are disabled this option has no effect. Reduce for _speed up_ processing **find all references, rename info**. **Warning** This option purposely cuts potentially useful links."
-        },
         "wglscript.intellisense.buildThreads": {
           "type": "integer",
           "scope": "resource",
@@ -64,7 +97,7 @@
           "default": 250,
           "markdownDescription": "Maximum build threads count on _initialize toolchain_"
         },
-        "wglscript.intellisense.tsvfsThreads": {
+        "wglscript.intellisense.typescriptThreads": {
           "type": "integer",
           "scope": "resource",
           "minimum": 1,
@@ -82,7 +115,7 @@
           "type": "string",
           "scope": "resource",
           "default": "Lib/AppGlobalScript.js",
-          "markdownDescription": "Global script module absolute path of wglscript project e.g. `Lib/AppGlobalScript.js`"
+          "markdownDescription": "Global script module of wglscript project"
         }
       }
     }

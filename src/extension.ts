@@ -1,9 +1,8 @@
 import * as path from 'path'
 import * as vscode from 'vscode'
+import * as compilerUtils from './compiler/utils'
 import * as intellisense from './intellisense/features'
-
-import { astStorage, attachGlobalScript, gls, normalizePath } from './compiler/utils'
-import { getConfigurationOption, mapToArray, requestOpenWglScriptWorkspace } from './utils'
+import * as utils from './utils'
 
 import type * as wgl from './intellisense/wglscript'
 
@@ -15,15 +14,13 @@ export function activate(context: vscode.ExtensionContext) {
 
   const wsf = vscode.workspace.workspaceFolders
   if (wsf === undefined) {
-    requestOpenWglScriptWorkspace()
+    utils.requestOpenWglScriptWorkspace()
   } else {
     const projectRoot = wsf[0].uri.fsPath
 
     if (
-      getConfigurationOption<boolean>(
-        'intellisense.workspaceFeatures.renameAllReferencesInProject'
-      ) &&
-      getConfigurationOption<boolean>('intellisense.workspaceFeatures.findAllReferencesInProject')
+      utils.getExtOption<boolean>('intellisense.workspaceFeatures.renameAllReferencesInProject') ||
+      utils.getExtOption<boolean>('intellisense.workspaceFeatures.findAllReferencesInProject')
     ) {
       // TODO: обернуть в промис и добавить опцию в настройки с включением фич только после индексации
       // TODO: переименовать инициализацию в индексацию / собрать нормальный StatusBarItem
@@ -35,7 +32,7 @@ export function activate(context: vscode.ExtensionContext) {
           location: vscode.ProgressLocation.Window,
           cancellable: false
         },
-        () => attachGlobalScript('plug.js', { projectRoot, modules: [] }, [])
+        () => compilerUtils.attachGlobalScript('plug.js', { projectRoot, modules: [] }, [])
       )
     }
 
@@ -85,7 +82,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.workspace.onDidChangeTextDocument(async e => {
         if (!e.document.isDirty) return // TODO: проверить когда гит откатывается проходит ли триггер
 
-        const normalized = normalizePath(e.document.uri.fsPath, projectRoot)
+        const normalized = compilerUtils.normalizePath(e.document.uri.fsPath, projectRoot)
 
         // TODO: удалять tsvfs инстанс текущего бандла
 
@@ -96,15 +93,17 @@ export function activate(context: vscode.ExtensionContext) {
         for (const [entry, deps] of intellisense.moduleReferencesStorage)
           if (deps.find(d => d === normalized)) intellisense.moduleReferencesStorage.delete(entry)
 
-        if (astStorage.has(normalized)) {
-          astStorage.delete(normalized)
+        if (compilerUtils.astStorage.has(normalized)) {
+          compilerUtils.astStorage.delete(normalized)
         }
 
-        if (gls.code !== '') {
-          if (mapToArray(gls.modules).indexOf(normalized.toLowerCase()) !== -1) {
-            gls.code = ''
-            gls.sourcemap = ''
-            gls.modules = new Map()
+        if (compilerUtils.gls.code !== '') {
+          if (
+            utils.mapToArray(compilerUtils.gls.modules).indexOf(normalized.toLowerCase()) !== -1
+          ) {
+            compilerUtils.gls.code = ''
+            compilerUtils.gls.sourcemap = ''
+            compilerUtils.gls.modules = new Map()
           }
         }
 
@@ -143,7 +142,7 @@ export function activate(context: vscode.ExtensionContext) {
         const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
         if (wsPath === undefined) {
-          requestOpenWglScriptWorkspace()
+          utils.requestOpenWglScriptWorkspace()
           return
         }
 
@@ -157,10 +156,10 @@ export function activate(context: vscode.ExtensionContext) {
           )
         } catch (error) {
           console.log(`ERROR: ${error}`)
-          astStorage.clear()
-          gls.code = ''
-          gls.sourcemap = ''
-          gls.modules = new Map()
+          compilerUtils.astStorage.clear()
+          compilerUtils.gls.code = ''
+          compilerUtils.gls.sourcemap = ''
+          compilerUtils.gls.modules = new Map()
           return
         }
 
@@ -180,7 +179,7 @@ export function activate(context: vscode.ExtensionContext) {
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
           if (wsPath === undefined) {
-            requestOpenWglScriptWorkspace()
+            utils.requestOpenWglScriptWorkspace()
             return
           }
 
@@ -195,10 +194,10 @@ export function activate(context: vscode.ExtensionContext) {
             return completions
           } catch (error) {
             console.log(`ERROR: ${error}`)
-            astStorage.clear()
-            gls.code = ''
-            gls.sourcemap = ''
-            gls.modules = new Map()
+            compilerUtils.astStorage.clear()
+            compilerUtils.gls.code = ''
+            compilerUtils.gls.sourcemap = ''
+            compilerUtils.gls.modules = new Map()
           }
         },
         resolveCompletionItem: async (item, token) => {
@@ -209,7 +208,7 @@ export function activate(context: vscode.ExtensionContext) {
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
           if (wsPath === undefined) {
-            requestOpenWglScriptWorkspace()
+            utils.requestOpenWglScriptWorkspace()
             return
           }
 
@@ -225,10 +224,10 @@ export function activate(context: vscode.ExtensionContext) {
             return completion
           } catch (error) {
             console.log(`ERROR: ${error}`)
-            astStorage.clear()
-            gls.code = ''
-            gls.sourcemap = ''
-            gls.modules = new Map()
+            compilerUtils.astStorage.clear()
+            compilerUtils.gls.code = ''
+            compilerUtils.gls.sourcemap = ''
+            compilerUtils.gls.modules = new Map()
           }
         }
       },
@@ -242,7 +241,7 @@ export function activate(context: vscode.ExtensionContext) {
         const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
         if (wsPath === undefined) {
-          requestOpenWglScriptWorkspace()
+          utils.requestOpenWglScriptWorkspace()
           return
         }
 
@@ -257,10 +256,10 @@ export function activate(context: vscode.ExtensionContext) {
           return { contents: quickInfo }
         } catch (error) {
           console.log(`ERROR: ${error}`)
-          astStorage.clear()
-          gls.code = ''
-          gls.sourcemap = ''
-          gls.modules = new Map()
+          compilerUtils.astStorage.clear()
+          compilerUtils.gls.code = ''
+          compilerUtils.gls.sourcemap = ''
+          compilerUtils.gls.modules = new Map()
         }
       }
     })
@@ -274,7 +273,7 @@ export function activate(context: vscode.ExtensionContext) {
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
           if (wsPath === undefined) {
-            requestOpenWglScriptWorkspace()
+            utils.requestOpenWglScriptWorkspace()
             return
           }
 
@@ -289,10 +288,10 @@ export function activate(context: vscode.ExtensionContext) {
             return signatureHelpItems
           } catch (error) {
             console.log(`ERROR: ${error}`)
-            astStorage.clear()
-            gls.code = ''
-            gls.sourcemap = ''
-            gls.modules = new Map()
+            compilerUtils.astStorage.clear()
+            compilerUtils.gls.code = ''
+            compilerUtils.gls.sourcemap = ''
+            compilerUtils.gls.modules = new Map()
           }
         }
       },
@@ -307,16 +306,14 @@ export function activate(context: vscode.ExtensionContext) {
         const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
         if (wsPath === undefined) {
-          requestOpenWglScriptWorkspace()
+          utils.requestOpenWglScriptWorkspace()
           return
         }
 
         let refs: wgl.SymbolEntry[] = []
         try {
           if (
-            getConfigurationOption<boolean>(
-              'intellisense.workspaceFeatures.findAllReferencesInProject'
-            )
+            utils.getExtOption<boolean>('intellisense.workspaceFeatures.findAllReferencesInProject')
           ) {
             refs = await intellisense.getReferencesAtPositionInProject(
               { fileName: document.fileName },
@@ -334,10 +331,10 @@ export function activate(context: vscode.ExtensionContext) {
           }
         } catch (error) {
           console.log(`ERROR: ${error}`)
-          astStorage.clear()
-          gls.code = ''
-          gls.sourcemap = ''
-          gls.modules = new Map()
+          compilerUtils.astStorage.clear()
+          compilerUtils.gls.code = ''
+          compilerUtils.gls.sourcemap = ''
+          compilerUtils.gls.modules = new Map()
           return
         }
 
@@ -355,14 +352,14 @@ export function activate(context: vscode.ExtensionContext) {
         const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
         if (wsPath === undefined) {
-          requestOpenWglScriptWorkspace()
+          utils.requestOpenWglScriptWorkspace()
           return
         }
 
         let refs: wgl.SymbolEntry[] = []
         try {
           if (
-            getConfigurationOption<boolean>(
+            utils.getExtOption<boolean>(
               'intellisense.workspaceFeatures.renameAllReferencesInProject'
             )
           ) {
@@ -382,10 +379,10 @@ export function activate(context: vscode.ExtensionContext) {
           }
         } catch (error) {
           console.log(`ERROR: ${error}`)
-          astStorage.clear()
-          gls.code = ''
-          gls.sourcemap = ''
-          gls.modules = new Map()
+          compilerUtils.astStorage.clear()
+          compilerUtils.gls.code = ''
+          compilerUtils.gls.sourcemap = ''
+          compilerUtils.gls.modules = new Map()
           return
         }
 
@@ -405,7 +402,7 @@ export function activate(context: vscode.ExtensionContext) {
         const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
         if (wsPath === undefined) {
-          requestOpenWglScriptWorkspace()
+          utils.requestOpenWglScriptWorkspace()
           return
         }
 
@@ -419,10 +416,10 @@ export function activate(context: vscode.ExtensionContext) {
           )
         } catch (error) {
           console.log(`ERROR: ${error}`)
-          astStorage.clear()
-          gls.code = ''
-          gls.sourcemap = ''
-          gls.modules = new Map()
+          compilerUtils.astStorage.clear()
+          compilerUtils.gls.code = ''
+          compilerUtils.gls.sourcemap = ''
+          compilerUtils.gls.modules = new Map()
         }
 
         if (di.find(d => d.source.match('node_modules\\\\@types'))) {
@@ -440,7 +437,7 @@ export function activate(context: vscode.ExtensionContext) {
         const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
         if (wsPath === undefined) {
-          requestOpenWglScriptWorkspace()
+          utils.requestOpenWglScriptWorkspace()
           return
         }
 
@@ -452,10 +449,10 @@ export function activate(context: vscode.ExtensionContext) {
           )
         } catch (error) {
           console.log(`ERROR: ${error}`)
-          astStorage.clear()
-          gls.code = ''
-          gls.sourcemap = ''
-          gls.modules = new Map()
+          compilerUtils.astStorage.clear()
+          compilerUtils.gls.code = ''
+          compilerUtils.gls.sourcemap = ''
+          compilerUtils.gls.modules = new Map()
         }
       }
     })
@@ -480,7 +477,7 @@ export function activate(context: vscode.ExtensionContext) {
         const wsPath = vscode.workspace.getWorkspaceFolder(editor.document.uri)?.uri.fsPath
 
         if (wsPath === undefined) {
-          requestOpenWglScriptWorkspace()
+          utils.requestOpenWglScriptWorkspace()
           return
         }
 
@@ -493,10 +490,10 @@ export function activate(context: vscode.ExtensionContext) {
           )
         } catch (error) {
           console.log(`ERROR: ${error}`)
-          astStorage.clear()
-          gls.code = ''
-          gls.sourcemap = ''
-          gls.modules = new Map()
+          compilerUtils.astStorage.clear()
+          compilerUtils.gls.code = ''
+          compilerUtils.gls.sourcemap = ''
+          compilerUtils.gls.modules = new Map()
         }
       }
     })

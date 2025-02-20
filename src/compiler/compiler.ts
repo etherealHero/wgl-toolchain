@@ -1,12 +1,6 @@
 import * as path from 'path'
-import { SourceNode } from 'source-map'
-import * as parser from './parser.js'
-import {
-  type CompileOptions,
-  attachGlobalScript,
-  normalizePath,
-  parseScriptModule
-} from './utils.js'
+import * as sm from 'source-map'
+import * as utils from './utils'
 
 export type AST<T extends Node> = T[]
 type NodeType =
@@ -21,16 +15,8 @@ interface Node {
   type: NodeType
   text: string
   location: {
-    start: {
-      offset: number
-      line: number
-      column: number
-    }
-    end: {
-      offset: number
-      line: number
-      column: number
-    }
+    start: { offset: number; line: number; column: number }
+    end: { offset: number; line: number; column: number }
   }
 }
 
@@ -43,9 +29,7 @@ export interface ImportNode extends Node {
    * ```
    */
   kind: 'ECMAScript' | 'WGLScript'
-  /**
-   * Raw file path of imported file
-   */
+  /** Raw file path of imported file */
   href: string
 }
 
@@ -58,9 +42,7 @@ export interface ImportNode extends Node {
 export interface RegionNode extends Node {
   type: 'region'
   kind: 'multiLineComment' | 'backticksStringLiteral' | 'text' | 'sql'
-  /**
-   * body contains start and end of region (#text, `, /*, *\/ etc.)
-   */
+  /** body contains start and end of region (#text, `, /*, *\/ etc.) */
   body: RegionLineNode[]
 }
 
@@ -78,101 +60,51 @@ function transpileRegionBrackets(code: string) {
   return code
 }
 
-export function transpileCallExpressionAssignment(code: string) {
-  // TODO: 1) not check string literal 2) not check multiline righthand expresion (need move to parser?)
-  if (!code.match('.Param')) return code
-  const matches = code.match(/(.+?)\.Param\((.+?)\)\s*[^=]=[^=]\s*([^;]+?)\s*;+(\s*\/\/.*|\s*)/)
-  if (!matches) return code
-  if (!matches.at(1) || !matches.at(2) || !matches.at(3)) return code
-  if (matches.at(4)) return `${matches[1]}.AddParam(${matches[2]}, ${matches[3]});${matches[4]}`
-  return `${matches[1]}.AddParam(${matches[2]}, ${matches[3]});`
-}
-
 /**
- * @param targetFile absolute file path of target file
+ * @param file file system path
  * @param opt compiler options
  */
-export async function compile(targetFile: string, opt: CompileOptions): Promise<SourceNode> {
-  // TODO: собрать дистрибутив и настройкой уровня логов
-  const targetFileNormalized = normalizePath(targetFile, opt.projectRoot)
-  const ast: AST<TNode> = await parseScriptModule(targetFile, opt.projectRoot)
-  opt.modules.push(targetFileNormalized.toLowerCase())
+export async function compile(file: string, opt: utils.CompileOptions): Promise<sm.SourceNode> {
+  const fileN = utils.normalizePath(file, opt.projectRoot)
+  const ast: AST<TNode> = await utils.parseScriptModule(file, opt.projectRoot)
+  opt.modules.push(fileN.toLowerCase())
 
-  const chunks: Array<string | SourceNode> = []
-  if (!opt.skipAttachGlobalScript) await attachGlobalScript(targetFile, opt, chunks)
-
+  const chunks: Array<string | sm.SourceNode> = []
+  if (!opt.skipAttachGlobalScript) await utils.attachGlobalScript(file, opt, chunks)
   if (ast.at(-1)?.type === 'breakLine') ast.pop() // remove EOF
+
   for (const n of ast) {
-    if (n.type === 'moduleResolution') {
-      const href = (n as ImportNode).href
-      let moduleFile: string
+    const { type, text } = n
+    let { line: ln, column: col } = n.location.start
+    col -= 1
 
-      // relative
-      if (href.startsWith('.')) moduleFile = path.join(`${path.dirname(targetFile)}/${href}`)
-      // absolute
-      else moduleFile = path.join(`${opt.projectRoot}/${href}`)
+    if (type === 'moduleResolution') {
+      const module = (n as ImportNode).href.startsWith('.')
+        ? path.join(`${path.dirname(file)}/${(n as ImportNode).href}`)
+        : path.join(`${opt.projectRoot}/${(n as ImportNode).href}`)
+      const moduleN = utils.normalizePath(module, opt.projectRoot)
+      const resolve = opt.modules.includes(moduleN.toLowerCase())
+        ? `/* @@unresolved ${moduleN} from ${fileN} */\n`
+        : [`/* @@resolved ${moduleN} from ${fileN} */\n`, await compile(module, opt)]
 
-      const moduleFileNormalized = normalizePath(moduleFile, opt.projectRoot)
-      if (opt.modules.indexOf(moduleFileNormalized.toLowerCase()) !== -1) {
-        chunks.push(
-          new SourceNode(
-            n.location.start.line,
-            n.location.start.column - 1,
-            targetFileNormalized,
-            `/* @@unresolved ${moduleFileNormalized} from ${targetFileNormalized} */\n`
-          )
-        )
-        continue
-      }
-
-      chunks.push(
-        new SourceNode(n.location.start.line, n.location.start.column - 1, targetFileNormalized, [
-          `/* @@resolved ${moduleFileNormalized} from ${targetFileNormalized} */\n`,
-          await compile(moduleFile, opt)
-        ])
-      )
+      chunks.push(new sm.SourceNode(ln, col, fileN, resolve))
       continue
     }
-    if (n.type === 'region') {
-      chunks.push(
-        new SourceNode(
-          n.location.start.line,
-          n.location.start.column - 1,
-          targetFileNormalized,
-          (n as RegionNode).body.flatMap(sn => {
-            return new SourceNode(
-              sn.location.start.line,
-              sn.location.start.column - 1,
-              targetFileNormalized,
-              transpileRegionBrackets(sn.text)
-            )
-          })
-        )
-      )
-      continue
-    }
-    if (n.type === 'statement') {
-      chunks.push(
-        new SourceNode(
-          n.location.start.line,
-          n.location.start.column - 1,
-          targetFileNormalized,
-          transpileCallExpressionAssignment(n.text)
-        )
-      )
-      continue
-    }
+
     chunks.push(
-      new SourceNode(
-        n.location.start.line,
-        n.location.start.column - 1,
-        targetFileNormalized,
-        n.text
+      new sm.SourceNode(
+        ln,
+        col,
+        fileN,
+        type === 'region'
+          ? (n as RegionNode).body.flatMap(rn => {
+              const { line: ln, column: col } = rn.location.start
+              return new sm.SourceNode(ln, col - 1, fileN, transpileRegionBrackets(rn.text))
+            })
+          : text
       )
     )
   }
 
-  return new SourceNode(null, null, null, chunks)
+  return new sm.SourceNode(null, null, null, chunks)
 }
-
-export const parse = (source: string): AST<TNode> => parser.parse(source)

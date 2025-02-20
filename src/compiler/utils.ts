@@ -1,10 +1,11 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { SourceMapConsumer, SourceNode } from 'source-map'
+import * as sm from 'source-map'
 import * as vscode from 'vscode'
-import { arrayToMap, getConfigurationOption, logtime, mapToArray } from '../utils'
-import { type AST, type TNode, compile } from './compiler'
+import * as libUtils from '../utils'
 import * as parser from './parser.js'
+
+import { type AST, type TNode, compile } from './compiler'
 
 /** Normalized path from {@link normalizePath} */
 export type TNormalizedPath = string
@@ -51,7 +52,7 @@ export async function parseScriptModule(file: string, projectRoot: string): Prom
   }
 
   try {
-    const ast: AST<TNode> = logtime(parser.parse, content)
+    const ast: AST<TNode> = libUtils.logtime(parser.parse, content)
     const astStack: { order: number; n: TNode }[] = []
     for (const i in ast) astStack.push({ order: Number(i), n: ast[Number(i)] })
     astStorage.set(fileNormalized, astStack)
@@ -68,56 +69,64 @@ interface GlobalScriptRaw {
   modules: Map<number, string>
 }
 
+/** Global script storage */
 export const gls: GlobalScriptRaw = { code: '', sourcemap: '', modules: new Map() }
 
+/**
+ * Attach global script
+ * @param file file system path
+ * @param opt compiler options
+ * @param chunks source node chunks
+ * @returns attach global script into {@link chunks}
+ */
 export async function attachGlobalScript(
-  targetFile: string,
+  file: string,
   opt: CompileOptions,
-  chunks: Array<string | SourceNode>
+  chunks: Array<string | sm.SourceNode>
 ) {
   if (
-    !getConfigurationOption<boolean>('globalScript.enable') ||
-    getConfigurationOption<string>('globalScript.path') == null ||
-    getConfigurationOption<string>('globalScript.path')?.length === 0
+    !libUtils.getExtOption<boolean>('globalScript.enable') ||
+    libUtils.getExtOption<string>('globalScript.path') == null ||
+    libUtils.getExtOption<string>('globalScript.path')?.length === 0
   )
     return
 
   const globalScript = path.join(
     opt.projectRoot,
-    getConfigurationOption<string>('globalScript.path')
+    libUtils.getExtOption<string>('globalScript.path')
   )
-  const globalScriptNormalized = normalizePath(globalScript, opt.projectRoot)
-  const targetFileNormalized = normalizePath(targetFile, opt.projectRoot)
+  const globalScriptN = normalizePath(globalScript, opt.projectRoot)
+  const fileN = normalizePath(file, opt.projectRoot)
 
   if (!fs.existsSync(globalScript)) {
-    console.log(`ERROR: Global script module ${globalScriptNormalized} not exists`)
+    console.log(`ERROR: Global script module ${globalScriptN} not exists`)
     return
   }
 
   // когда будет собирать самого себя, чтобы не ушел в рекурсию
-  if (opt.modules.indexOf(globalScriptNormalized.toLowerCase()) !== -1) return
+  if (opt.modules.includes(globalScriptN.toLowerCase())) return
 
-  let globalScriptSourceNode: SourceNode
+  let globalScriptSN: sm.SourceNode
 
   if (gls.code === '') {
-    globalScriptSourceNode = await compile(globalScript, opt)
-    const strWSM = globalScriptSourceNode.toStringWithSourceMap()
+    globalScriptSN = await compile(globalScript, opt)
+    const strWSM = globalScriptSN.toStringWithSourceMap()
 
-    gls.modules = arrayToMap([...opt.modules].filter(m => m !== targetFileNormalized.toLowerCase()))
+    gls.modules = libUtils.arrayToMap([...opt.modules].filter(m => m !== fileN.toLowerCase()))
     gls.code = strWSM.code
     gls.sourcemap = strWSM.map.toString()
   } else {
-    for (const m of mapToArray(gls.modules)) opt.modules.push(m) // simulate compile proccess
+    for (const m of libUtils.mapToArray(gls.modules)) opt.modules.push(m) // simulate compile proccess
   }
 
-  const consumer = await new SourceMapConsumer(gls.sourcemap)
-  globalScriptSourceNode = SourceNode.fromStringWithSourceMap(gls.code, consumer)
+  const consumer = await new sm.SourceMapConsumer(gls.sourcemap)
+  globalScriptSN = sm.SourceNode.fromStringWithSourceMap(gls.code, consumer)
   consumer.destroy()
 
   chunks.push(
-    new SourceNode(null, null, targetFileNormalized, [
-      `/* @@resolved ${globalScriptNormalized} from ${targetFileNormalized} */\n`,
-      globalScriptSourceNode
+    new sm.SourceNode(null, null, fileN, [
+      `/* @@resolved ${globalScriptN} from ${fileN} */\n`,
+      globalScriptSN
     ])
   )
 }

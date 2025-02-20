@@ -3,7 +3,7 @@ import * as vscode from 'vscode'
 import { createHash } from 'crypto'
 import { workspace } from 'vscode'
 
-export const getConfigurationOption = <T>(option: string): T =>
+export const getExtOption = <T>(option: string): T =>
   workspace.getConfiguration('wglscript').get(option) as T
 
 export function requestOpenWglScriptWorkspace() {
