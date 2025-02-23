@@ -310,6 +310,14 @@ export function activate(context: vscode.ExtensionContext) {
           return
         }
 
+        const wordPos = document.getWordRangeAtPosition(position)
+        let word = ''
+        if (wordPos && wordPos.start.line === wordPos.end.line) {
+          word = document
+            .lineAt(wordPos.start.line)
+            .text.slice(wordPos.start.character, wordPos.end.character)
+        }
+
         let refs: wgl.SymbolEntry[] = []
         try {
           if (
@@ -319,7 +327,8 @@ export function activate(context: vscode.ExtensionContext) {
               { fileName: document.fileName },
               position,
               wsPath,
-              token
+              token,
+              new RegExp(word, 'm')
             )
           } else {
             refs = await intellisense.getReferencesAtPosition(
@@ -356,6 +365,14 @@ export function activate(context: vscode.ExtensionContext) {
           return
         }
 
+        const wordPos = document.getWordRangeAtPosition(position)
+        let word = ''
+        if (wordPos && wordPos.start.line === wordPos.end.line) {
+          word = document
+            .lineAt(wordPos.start.line)
+            .text.slice(wordPos.start.character, wordPos.end.character)
+        }
+
         let refs: wgl.SymbolEntry[] = []
         try {
           if (
@@ -367,7 +384,8 @@ export function activate(context: vscode.ExtensionContext) {
               { fileName: document.fileName },
               position,
               wsPath,
-              token
+              token,
+              new RegExp(word, 'm')
             )
           } else {
             refs = await intellisense.getReferencesAtPosition(

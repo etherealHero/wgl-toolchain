@@ -240,7 +240,7 @@ export function isCancelled(
   return isCancelled
 }
 
-export async function getJsFiles(projectRoot: string) {
+export async function getJsFiles(projectRoot: string, pattern?: RegExp) {
   const gitignorePath = path.join(projectRoot, '.gitignore')
   let ignoreRules: string[] = []
 
@@ -263,7 +263,12 @@ export async function getJsFiles(projectRoot: string) {
       if (entry.isDirectory()) {
         jsFiles = jsFiles.concat(await readDirRecursive(fullPath))
       } else if (entry.isFile() && path.extname(entry.name) === '.js') {
-        jsFiles.push(relativePath)
+        if (pattern) {
+          if (Buffer.from(fs.readFileSync(fullPath)).toString('utf-8').match(pattern))
+            jsFiles.push(relativePath)
+        } else {
+          jsFiles.push(relativePath)
+        }
       }
     }
 

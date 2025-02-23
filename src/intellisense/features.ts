@@ -503,7 +503,8 @@ export async function getReferencesAtPositionInProject(
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
-  token?: vscode.CancellationToken
+  token?: vscode.CancellationToken,
+  searchPattern?: RegExp
 ): Promise<wgl.SymbolEntry[]> {
   const definitions = await getDefinitionInfoAtPosition(document, position, projectRoot, token)
 
@@ -536,11 +537,17 @@ export async function getReferencesAtPositionInProject(
   let modules: cUtils.TNormalizedPath[]
   if (globalDeps.includes(D.source)) {
     // 1.2 дефинишн находится в глобалскрипте
-    // TODO: фильтруем скрипты по матчу наименования символа в контенте файла (!Регистрозависимо)
-    modules = Array.from(moduleReferencesStorage.keys())
+    modules = await utils.getJsFiles(projectRoot, searchPattern)
+    modules
   } else {
     // 1.3 дефинишн находится в локальном скрипте
-    modules = await getModuleReferences(D.source, projectRoot, token)
+    modules = await getModuleReferences(
+      D.source,
+      projectRoot,
+      token,
+      false /** init */,
+      searchPattern
+    )
   }
 
   const modulesLen = modules.length
@@ -617,11 +624,14 @@ export async function getModuleReferences(
   module: cUtils.TNormalizedPath,
   projectRoot: string,
   token?: vscode.CancellationToken,
-  init?: true
+  init?: boolean,
+  searchPattern?: RegExp
 ): Promise<cUtils.TNormalizedPath[]> {
   if (token?.isCancellationRequested) return []
 
-  let scripts: Array<cUtils.TNormalizedPath> = await utils.getJsFiles(projectRoot)
+  let scripts: Array<cUtils.TNormalizedPath> = await utils.getJsFiles(projectRoot, searchPattern)
+
+  scripts
 
   if (moduleReferencesStorage.size) {
     const traversedScripts: Array<cUtils.TNormalizedPath> = []
