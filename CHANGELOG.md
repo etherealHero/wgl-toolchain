@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.1.0
+
+- formatter
+- fixes
+
 ## 0.0.8
 
 - provide diagnostics

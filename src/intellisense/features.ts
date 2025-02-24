@@ -1,5 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
+import * as prettier from 'prettier'
 import * as sm from 'source-map'
 import * as ts from 'typescript'
 import * as vscode from 'vscode'
@@ -427,6 +428,7 @@ export async function getNavigationBarItems(
   if (NT === undefined || !NT.length || token?.isCancellationRequested) return
 
   const sourceSymbols: vscode.SymbolInformation[] = []
+  const sf = env.getSourceFile(utils.bundle) as ts.SourceFileLike
   const forConsumer: Array<{
     item: ts.NavigationTree
     start: ts.LineAndCharacter
@@ -441,7 +443,6 @@ export async function getNavigationBarItems(
       const pos = item.spans.at(0)
 
       if (pos) {
-        const sf = env.getSourceFile(utils.bundle) as ts.SourceFileLike
         const start = ts.getLineAndCharacterOfPosition(sf, pos.start)
         const end = ts.getLineAndCharacterOfPosition(sf, pos.start + pos.length)
         container && forConsumer.push({ item, start, end, container })
@@ -868,4 +869,37 @@ export async function getSemanticDiagnostics(
   if (vscode.window.activeTextEditor?.document.version !== version) return
 
   return sourceD
+}
+
+export async function getFormattingEditsForDocument(
+  document: Pick<vscode.TextDocument, 'fileName'>,
+  projectRoot: string,
+  endPos: vscode.Position,
+  token?: vscode.CancellationToken
+): Promise<vscode.ProviderResult<vscode.TextEdit[]>> {
+  if (token?.isCancellationRequested) return
+
+  const sourceNode = await compile(document.fileName, {
+    projectRoot,
+    modules: [],
+    skipAttachDependencies: true,
+    skipAttachGlobalScript: true
+  })
+  const strWSM = sourceNode.toStringWithSourceMap({
+    file: cUtils.normalizePath(document.fileName, projectRoot)
+  })
+
+  if (token?.isCancellationRequested) return
+
+  let config = await prettier.resolveConfig(path.join(projectRoot, '.prettierrc'))
+
+  if (config) config = { ...config, parser: 'typescript' }
+  else config = { parser: 'typescript' }
+
+  return [
+    {
+      newText: await prettier.format(strWSM.code, config),
+      range: new vscode.Range(0, 0, endPos.line, endPos.character + 1)
+    }
+  ]
 }

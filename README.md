@@ -13,5 +13,5 @@ This extension provides support for the WGLScript programming language.
 	- [x] diagnostics
 	- [] find references (in database objects)
 	- [] go to database objects
-- [] formatter
+- [x] formatter
 - [] linter

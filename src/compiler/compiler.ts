@@ -83,6 +83,12 @@ export async function compile(file: string, opt: utils.CompileOptions): Promise<
         ? path.join(`${path.dirname(file)}/${(n as ImportNode).href}`)
         : path.join(`${opt.projectRoot}/${(n as ImportNode).href}`)
       const moduleN = utils.normalizePath(module, opt.projectRoot)
+
+      if (opt.skipAttachDependencies) {
+        chunks.push(new sm.SourceNode(ln, col, fileN, `import "${(n as ImportNode).href}";`))
+        continue
+      }
+
       const resolve = opt.modules.includes(moduleN.toLowerCase())
         ? `/* @@unresolved ${moduleN} from ${fileN} */\n`
         : [`/* @@resolved ${moduleN} from ${fileN} */\n`, await compile(module, opt)]

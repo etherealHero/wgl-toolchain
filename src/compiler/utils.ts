@@ -15,6 +15,7 @@ export interface CompileOptions {
   /** All modules which parsed & compiled (local and global modules) */
   modules: string[]
   skipAttachGlobalScript?: boolean
+  skipAttachDependencies?: boolean
 }
 
 /**

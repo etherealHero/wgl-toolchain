@@ -510,6 +510,33 @@ export function activate(context: vscode.ExtensionContext) {
     })
   )
 
+  context.subscriptions.push(
+    vscode.languages.registerDocumentFormattingEditProvider('javascript', {
+      provideDocumentFormattingEdits: async (document, options, token) => {
+        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+        if (wsPath === undefined) {
+          utils.requestOpenWglScriptWorkspace()
+          return
+        }
+
+        const endPos = document.positionAt(document.getText().length - 1)
+
+        try {
+          return await intellisense.getFormattingEditsForDocument(document, wsPath, endPos, token)
+        } catch (error) {
+          console.log(`ERROR: ${error}`)
+          compilerUtils.astStorage.clear()
+          compilerUtils.gls.code = ''
+          compilerUtils.gls.sourcemap = ''
+          compilerUtils.gls.modules = new Map()
+        }
+
+        return null
+      }
+    })
+  )
+
   diagnosticsCollection = vscode.languages.createDiagnosticCollection('wglscript')
   context.subscriptions.push(diagnosticsCollection)
 }
