@@ -537,6 +537,7 @@ export async function getReferencesAtPositionInProject(
   let modules: cUtils.TNormalizedPath[]
   if (globalDeps.includes(D.source)) {
     // 1.2 дефинишн находится в глобалскрипте
+    // TODO: исключить зависимости глобалскрипта, нужен хойстинг по полученным файлам
     modules = await utils.getJsFiles(projectRoot, searchPattern)
     modules
   } else {
@@ -629,6 +630,7 @@ export async function getModuleReferences(
 ): Promise<cUtils.TNormalizedPath[]> {
   if (token?.isCancellationRequested) return []
 
+  // TODO: здесь теряется хоистинг
   let scripts: Array<cUtils.TNormalizedPath> = await utils.getJsFiles(projectRoot, searchPattern)
 
   scripts
@@ -763,7 +765,8 @@ export async function getSemanticDiagnostics(
 
   if (vscode.window.activeTextEditor?.document.version !== version) return
 
-  const D = libUtils.logtime(env.languageService.getSemanticDiagnostics, utils.bundle)
+  const semanticD = libUtils.logtime(env.languageService.getSemanticDiagnostics, utils.bundle)
+  const syntacticD = libUtils.logtime(env.languageService.getSyntacticDiagnostics, utils.bundle)
   const sourceD = new Map<cUtils.TNormalizedPath, vscode.Diagnostic[]>()
   const allowedErrorCodes = libUtils.getExtOption<number[]>(
     'intellisense.diagnostics.allowedErrorCodes'
@@ -776,7 +779,32 @@ export async function getSemanticDiagnostics(
     end: ts.LineAndCharacter
   }[] = []
 
-  for (const d of D) {
+  for (const d of syntacticD) {
+    if (
+      !d.file ||
+      !d.start ||
+      d.file.fileName !== utils.bundle ||
+      !d.length ||
+      d.start < cUtils.gls.code.length /** location at global script */
+    )
+      continue
+
+    if (vscode.window.activeTextEditor?.document.version !== version) break
+
+    const start = libUtils.logtime(ts.getLineAndCharacterOfPosition, d.file, d.start)
+    const end = libUtils.logtime(ts.getLineAndCharacterOfPosition, d.file, d.start + d.length)
+    forConsumer.push({
+      message: typeof d.messageText === 'string' ? d.messageText : d.messageText.messageText,
+      category: allowedErrorCodes.includes(d.code)
+        ? vscode.DiagnosticSeverity.Warning
+        : utils.TSDiagnosticCategoryToVSCodeDiagnosticSeverity(d.category),
+      code: d.code,
+      start,
+      end
+    })
+  }
+
+  for (const d of semanticD) {
     if (
       !d.file ||
       !d.start ||

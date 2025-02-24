@@ -18,29 +18,20 @@ export function activate(context: vscode.ExtensionContext) {
   } else {
     const projectRoot = wsf[0].uri.fsPath
 
-    if (
-      utils.getExtOption<boolean>('intellisense.workspaceFeatures.renameAllReferencesInProject') ||
-      utils.getExtOption<boolean>('intellisense.workspaceFeatures.findAllReferencesInProject')
-    ) {
-      // TODO: обернуть в промис и добавить опцию в настройки с включением фич только после индексации
-      // TODO: переименовать инициализацию в индексацию / собрать нормальный StatusBarItem
-      intellisense.getModuleReferences('plug.js', projectRoot, undefined, true)
-    } else {
-      vscode.window.withProgress(
-        {
-          title: 'WGLToolchain: Initialize features',
-          location: vscode.ProgressLocation.Window,
-          cancellable: false
-        },
-        () => compilerUtils.attachGlobalScript('plug.js', { projectRoot, modules: [] }, [])
-      )
-    }
+    vscode.window.withProgress(
+      {
+        title: 'WGLToolchain: Initialize features',
+        location: vscode.ProgressLocation.Window,
+        cancellable: false
+      },
+      () => compilerUtils.attachGlobalScript('plug.js', { projectRoot, modules: [] }, [])
+    )
 
     if (vscode.window.activeTextEditor?.document) {
       const activeDoc = vscode.window.activeTextEditor?.document
       const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
 
-      if (wsPath) {
+      if (wsPath && activeDoc.languageId === 'javascript') {
         intellisense
           .getSemanticDiagnostics({ fileName: activeDoc.fileName }, wsPath, activeDoc.version)
           .then(diagnostics => {
@@ -58,6 +49,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!vscode.window.activeTextEditor) return
 
         const activeDoc = vscode.window.activeTextEditor.document
+        if (activeDoc.languageId !== 'javascript') return
         if (e.document.fileName !== activeDoc.fileName) return
 
         const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
@@ -80,6 +72,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
       vscode.workspace.onDidChangeTextDocument(async e => {
+        if (e.document.languageId !== 'javascript') return
         if (!e.document.isDirty) return // TODO: проверить когда гит откатывается проходит ли триггер
 
         const normalized = compilerUtils.normalizePath(e.document.uri.fsPath, projectRoot)
