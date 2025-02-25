@@ -2,11 +2,13 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as tsvfs from '@typescript/vfs'
 import * as ignore from 'ignore'
+import * as sm from 'source-map'
 import * as ts from 'typescript'
 import * as vscode from 'vscode'
+import * as cUtils from '../compiler/utils'
+import * as libUtils from '../utils'
 
-import type { TNormalizedPath } from '../compiler/utils'
-import { getHash, logtime } from '../utils'
+import { compile } from '../compiler/compiler'
 
 /** Bundle file name */
 export const bundle = 'bundle.js'
@@ -37,7 +39,7 @@ export function getVTSEnv(
   bundleContent: string,
   cacheEnv?: boolean
 ): tsvfs.VirtualTypeScriptEnvironment {
-  const hash = getHash(bundleContent)
+  const hash = libUtils.getHash(bundleContent)
 
   if (VTSEnvStorage.has(hash)) {
     return VTSEnvStorage.get(hash) as tsvfs.VirtualTypeScriptEnvironment
@@ -49,7 +51,13 @@ export function getVTSEnv(
   const system = tsvfs.createSystem(fsMap)
   // TODO: последний аргумент customTransformer изучить и прокинуть регистронезависимость для встроенных функций
   // TODO: сохранять диагностику на CallExpressionAssignment
-  const env = logtime(tsvfs.createVirtualTypeScriptEnvironment, system, [bundle], ts, compilerOpts)
+  const env = libUtils.logtime(
+    tsvfs.createVirtualTypeScriptEnvironment,
+    system,
+    [bundle],
+    ts,
+    compilerOpts
+  )
 
   if (!(cacheEnv === false)) VTSEnvStorage.set(hash, env)
 
@@ -252,7 +260,7 @@ export async function getJsFiles(projectRoot: string, pattern?: RegExp) {
 
   async function readDirRecursive(dir: string) {
     const entries = await fs.promises.readdir(dir, { withFileTypes: true })
-    let jsFiles: TNormalizedPath[] = []
+    let jsFiles: cUtils.TNormalizedPath[] = []
 
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name)
@@ -285,4 +293,127 @@ export function chunkedArray<T>(arr: Array<T>, chunkSize: number) {
   }
 
   return result
+}
+
+interface IBundleInfo {
+  bundleContent: string
+  entryContent: string
+  consumer: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer
+  dependencies: cUtils.TNormalizedPath[]
+}
+
+export const bundleInfoRepository = new Map<cUtils.TNormalizedPath, IBundleInfo>()
+
+// TODO: переделать параметры в объект
+export async function consumeScriptModule<T>(
+  document: Pick<vscode.TextDocument, 'fileName'>,
+  position: Pick<vscode.Position, 'line' | 'character'> | null,
+  projectRoot: string,
+  consumer: (
+    consumer: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer,
+    bundle: string,
+    bundlePosition: sm.NullablePosition,
+    entryContent: string
+  ) => Promise<T> | T,
+  token?: undefined | vscode.CancellationToken | (vscode.CancellationToken | undefined)[],
+  source?: cUtils.TNormalizedPath
+): Promise<T | undefined> {
+  if (isCancelled(token)) return
+
+  const entry = cUtils.normalizePath(document.fileName, projectRoot)
+  let bundleContent = ''
+  let entryContent = ''
+  let sourceMapConsumer: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer | undefined
+
+  if (bundleInfoRepository.has(entry)) {
+    const bundleInfo = bundleInfoRepository.get(entry) as IBundleInfo
+
+    bundleContent = bundleInfo.bundleContent
+    sourceMapConsumer = bundleInfo.consumer
+    entryContent = bundleInfo.entryContent
+  } else {
+    const sn = await compile(document.fileName, { projectRoot, modules: [] })
+    const codeWithSourceMap = sn.toStringWithSourceMap({ file: entry })
+    const rawSourceMap = codeWithSourceMap.map.toString()
+    const snEntry = await compile(document.fileName, {
+      projectRoot,
+      modules: [],
+      skipAttachDependencies: true,
+      skipAttachGlobalScript: true
+    })
+
+    bundleContent = codeWithSourceMap.code
+    entryContent = snEntry.toStringWithSourceMap({ file: entry }).code
+    sourceMapConsumer = await new sm.SourceMapConsumer(rawSourceMap)
+
+    bundleInfoRepository.set(entry, {
+      consumer: sourceMapConsumer,
+      dependencies: sourceMapConsumer.sources,
+      bundleContent,
+      entryContent
+    })
+  }
+
+  const bundlePosition = position
+    ? sourceMapConsumer.generatedPositionFor({
+        source: source ?? entry,
+        line: position.line + 1,
+        column: position.character
+      })
+    : { line: -1, column: -1, lastColumn: -1 }
+
+  if (
+    !bundlePosition ||
+    bundlePosition.line == null ||
+    bundlePosition.column == null ||
+    isCancelled(token)
+  )
+    return
+
+  const resolve = await consumer(sourceMapConsumer, bundleContent, bundlePosition, entryContent)
+
+  if (isCancelled(token)) return
+
+  return resolve
+}
+
+export function track<T extends object>(obj: T) {
+  const methodHandler = {
+    // biome-ignore lint/complexity/noBannedTypes: <explanation>
+    // biome-ignore lint/suspicious/noExplicitAny: <explanation>
+    apply(target: Function, thisArg: any, argumentsList: any[]) {
+      const methodName = target.name || 'anonymous function'
+      const start = performance.now()
+
+      const result = Reflect.apply(target, thisArg, argumentsList)
+
+      if (result instanceof Promise) {
+        return result.then(res => {
+          console.log(
+            `DEBUG execution time ${methodName} ${Math.round((performance.now() - start) * 100) / 100}ms`
+          )
+          return res
+        })
+      }
+
+      console.log(
+        `DEBUG execution time ${methodName} ${Math.round((performance.now() - start) * 100) / 100}ms`
+      )
+      return result
+    }
+  }
+
+  return new Proxy(obj, {
+    get(target, prop: string | symbol, receiver) {
+      const originalProperty = Reflect.get(target, prop, receiver)
+
+      if (typeof originalProperty === 'function') {
+        return new Proxy(originalProperty, methodHandler)
+      }
+
+      console.log(`Property "${String(prop)}" was read with value: ${originalProperty}`)
+
+      return originalProperty
+    }
+  })
 }

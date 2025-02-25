@@ -1,9 +1,10 @@
 import * as path from 'path'
 import * as vscode from 'vscode'
 import * as compilerUtils from './compiler/utils'
-import * as intellisense from './intellisense/features'
+import { intellisense } from './intellisense/features'
 import * as utils from './utils'
 
+import { bundleInfoRepository } from './intellisense/utils'
 import type * as wgl from './intellisense/wglscript'
 
 let diagnosticsCollection: vscode.DiagnosticCollection
@@ -33,7 +34,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       if (wsPath && activeDoc.languageId === 'javascript') {
         intellisense
-          .getSemanticDiagnostics({ fileName: activeDoc.fileName }, wsPath, activeDoc.version)
+          .getDiagnostics({ fileName: activeDoc.fileName }, wsPath, activeDoc.version)
           .then(diagnostics => {
             if (!diagnostics) return
             diagnosticsCollection.clear()
@@ -56,7 +57,7 @@ export function activate(context: vscode.ExtensionContext) {
         if (!wsPath) return
         await new Promise(r => setTimeout(r, 1000))
 
-        const diagnostics = await intellisense.getSemanticDiagnostics(
+        const diagnostics = await intellisense.getDiagnostics(
           { fileName: activeDoc.fileName },
           wsPath,
           activeDoc.version
@@ -82,6 +83,9 @@ export function activate(context: vscode.ExtensionContext) {
         if (intellisense.modulesWithError.has(normalized)) {
           intellisense.modulesWithError.delete(normalized)
         }
+
+        for (const [entry, info] of bundleInfoRepository)
+          if (info.dependencies.find(d => d === normalized)) bundleInfoRepository.delete(entry)
 
         for (const [entry, deps] of intellisense.moduleReferencesStorage)
           if (deps.find(d => d === normalized)) intellisense.moduleReferencesStorage.delete(entry)
@@ -110,11 +114,7 @@ export function activate(context: vscode.ExtensionContext) {
               await new Promise(r => setTimeout(r, 2000))
 
               intellisense
-                .getSemanticDiagnostics(
-                  { fileName: activeDoc.fileName },
-                  wsPath,
-                  e.document.version
-                )
+                .getDiagnostics({ fileName: activeDoc.fileName }, wsPath, e.document.version)
                 .then(diagnostics => {
                   if (!diagnostics) return
                   diagnosticsCollection.clear()

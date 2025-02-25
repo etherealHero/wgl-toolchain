@@ -12,184 +12,152 @@ import type * as wgl from './wglscript'
 
 import { compile } from '../compiler/compiler'
 
-export async function getDefinitionInfoAtPosition(
+async function getDefinitionInfoAtPosition(
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
   token?: vscode.CancellationToken
 ): Promise<wgl.SymbolEntry[]> {
-  if (token?.isCancellationRequested) return []
+  const consume = async (
+    consumer: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer,
+    code: string,
+    pos: sm.NullablePosition
+  ) => {
+    if (pos.line == null || pos.column == null || token?.isCancellationRequested) return []
 
-  const sn = await compile(document.fileName, { projectRoot, modules: [] })
+    const env = libUtils.logtime(utils.getVTSEnv, projectRoot, code)
 
-  if (token?.isCancellationRequested) return []
+    if (token?.isCancellationRequested) return []
 
-  const strWSM = sn.toStringWithSourceMap({
-    file: cUtils.normalizePath(document.fileName, projectRoot)
-  })
-
-  let pos: sm.NullablePosition = { line: null, column: null, lastColumn: null }
-  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    pos = consumer.generatedPositionFor({
-      source: cUtils.normalizePath(document.fileName, projectRoot),
-      line: position.line + 1,
-      column: position.character
-    })
-  })
-
-  if (pos.line == null || pos.column == null || token?.isCancellationRequested) return []
-  // ;(await import('fs')).writeFileSync(`${document.fileName}.b.js`, strWSM.code)
-
-  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
-
-  if (token?.isCancellationRequested) return []
-
-  const D = libUtils.logtime(
-    env.languageService.getDefinitionAtPosition,
-    utils.bundle,
-    ts.getPositionOfLineAndCharacter(
-      env.getSourceFile(utils.bundle) as ts.SourceFileLike,
-      pos.line - 1,
-      position.character
+    const D = libUtils.logtime(
+      env.languageService.getDefinitionAtPosition,
+      utils.bundle,
+      ts.getPositionOfLineAndCharacter(
+        env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+        pos.line - 1,
+        position.character
+      )
     )
-  )
 
-  if (D === undefined || !D.length || token?.isCancellationRequested) return []
+    if (D === undefined || !D.length || token?.isCancellationRequested) return []
 
-  const sourceD: wgl.SymbolEntry[] = []
-  const forConsumer: [ts.DefinitionInfo, ts.LineAndCharacter][] = []
-  for (const di of D) {
-    const sf = env.getSourceFile(di.fileName) as ts.SourceFileLike
-    const lnCh = ts.getLineAndCharacterOfPosition(sf, di.textSpan.start)
+    const sourceD: wgl.SymbolEntry[] = []
+    const forConsumer: [ts.DefinitionInfo, ts.LineAndCharacter][] = []
+    for (const di of D) {
+      const sf = env.getSourceFile(di.fileName) as ts.SourceFileLike
+      const lnCh = ts.getLineAndCharacterOfPosition(sf, di.textSpan.start)
 
-    if (di.fileName === utils.bundle) {
-      forConsumer.push([di, lnCh])
-      continue
+      if (di.fileName === utils.bundle) {
+        forConsumer.push([di, lnCh])
+        continue
+      }
+
+      const source = path.join('node_modules', '@types', 'wglscript', 'generated', di.fileName)
+      const { line, character: column } = lnCh
+      sourceD.push({ source, line, column, length: di.textSpan.length })
     }
 
-    const source = path.join('node_modules', '@types', 'wglscript', 'generated', di.fileName)
-    const { line, character: column } = lnCh
-    sourceD.push({ source, line, column, length: di.textSpan.length })
-  }
-
-  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
     forConsumer.map(record => {
       const lnCh = record[1]
       const { line: ln, character: col } = record[1]
       const length = record[0].textSpan.length
-      const { source, line: orLn } = consumer.originalPositionFor({ line: ln + 1, column: col + 1 })
+      const { source, line: orLn } = consumer.originalPositionFor({
+        line: ln + 1,
+        column: col + 1
+      })
 
       if (source == null || orLn == null) return
       sourceD.push({ source, line: orLn - 1, column: lnCh.character, length })
     })
-  })
 
-  if (token?.isCancellationRequested) return []
+    if (token?.isCancellationRequested) return []
 
-  return sourceD
+    return sourceD
+  }
+
+  return (await utils.consumeScriptModule(document, position, projectRoot, consume, token)) || []
 }
 
-export async function getCompletionsAtPosition(
+async function getCompletionsAtPosition(
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
   token?: vscode.CancellationToken
 ): Promise<vscode.ProviderResult<vscode.CompletionItem[]>> {
-  if (token?.isCancellationRequested) return []
+  const consume = async (
+    _: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer,
+    code: string,
+    pos: sm.NullablePosition
+  ) => {
+    if (pos.line == null || pos.column == null || token?.isCancellationRequested) return []
 
-  const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
+    const env = libUtils.logtime(utils.getVTSEnv, projectRoot, code)
 
-  if (token?.isCancellationRequested) return []
+    if (token?.isCancellationRequested) return []
 
-  const strWSM = sourceNode.toStringWithSourceMap({
-    file: cUtils.normalizePath(document.fileName, projectRoot)
-  })
+    const C = libUtils.logtime(
+      env.languageService.getCompletionsAtPosition,
+      utils.bundle,
+      ts.getPositionOfLineAndCharacter(
+        env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+        pos.line - 1,
+        position.character
+      ),
+      { triggerKind: ts.CompletionTriggerKind.TriggerCharacter },
+      ts.getDefaultFormatCodeSettings()
+    )
 
-  let pos: sm.NullablePosition = { line: null, column: null, lastColumn: null }
-  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    pos = consumer.generatedPositionFor({
-      source: cUtils.normalizePath(document.fileName, projectRoot),
-      line: position.line + 1,
-      column: position.character
-    })
-  })
+    if (C === undefined || !C.entries.length || token?.isCancellationRequested) return []
 
-  if (pos.line == null || pos.column == null || token?.isCancellationRequested) return []
+    if (token?.isCancellationRequested) []
 
-  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
+    return C.entries.map<vscode.CompletionItem>(({ name: label, sortText, kind }) => ({
+      kind: utils.TSElementKindtoVSCodeCompletionItemKind(kind),
+      sortText,
+      label
+    }))
+  }
 
-  if (token?.isCancellationRequested) return []
-
-  const C = libUtils.logtime(
-    env.languageService.getCompletionsAtPosition,
-    utils.bundle,
-    ts.getPositionOfLineAndCharacter(
-      env.getSourceFile(utils.bundle) as ts.SourceFileLike,
-      pos.line - 1,
-      position.character
-    ),
-    { triggerKind: ts.CompletionTriggerKind.TriggerCharacter },
-    ts.getDefaultFormatCodeSettings()
-  )
-
-  if (C === undefined || !C.entries.length || token?.isCancellationRequested) return []
-
-  if (token?.isCancellationRequested) []
-
-  return C.entries.map<vscode.CompletionItem>(({ name: label, sortText, kind }) => ({
-    kind: utils.TSElementKindtoVSCodeCompletionItemKind(kind),
-    sortText,
-    label
-  }))
+  return await utils.consumeScriptModule(document, position, projectRoot, consume, token)
 }
 
-export async function getCompletionEntryDetails(
+async function getCompletionEntryDetails(
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   completionItemLabel: string,
   projectRoot: string,
   token?: vscode.CancellationToken
 ): Promise<vscode.ProviderResult<vscode.CompletionItem>> {
-  if (token?.isCancellationRequested) return
+  const consume = async (
+    _: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer,
+    code: string,
+    pos: sm.NullablePosition
+  ) => {
+    if (pos.line == null || pos.column == null || token?.isCancellationRequested) return
 
-  const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
-  const strWSM = sourceNode.toStringWithSourceMap({
-    file: cUtils.normalizePath(document.fileName, projectRoot)
-  })
+    const env = libUtils.logtime(utils.getVTSEnv, projectRoot, code)
 
-  if (token?.isCancellationRequested) return
+    if (token?.isCancellationRequested) return
 
-  let pos: sm.NullablePosition = { line: null, column: null, lastColumn: null }
-  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    pos = consumer.generatedPositionFor({
-      source: cUtils.normalizePath(document.fileName, projectRoot),
-      line: position.line + 1,
-      column: position.character
-    })
-  })
+    return libUtils.logtime(
+      env.languageService.getCompletionEntryDetails,
+      utils.bundle,
+      ts.getPositionOfLineAndCharacter(
+        env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+        pos.line - 1,
+        position.character
+      ),
+      completionItemLabel,
+      ts.getDefaultFormatCodeSettings(),
+      undefined,
+      undefined,
+      undefined
+    )
+  }
 
-  if (pos.line == null || pos.column == null || token?.isCancellationRequested) return
+  const D = await utils.consumeScriptModule(document, position, projectRoot, consume, token)
 
-  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
-
-  if (token?.isCancellationRequested) return
-
-  const D = libUtils.logtime(
-    env.languageService.getCompletionEntryDetails,
-    utils.bundle,
-    ts.getPositionOfLineAndCharacter(
-      env.getSourceFile(utils.bundle) as ts.SourceFileLike,
-      pos.line - 1,
-      position.character
-    ),
-    completionItemLabel,
-    ts.getDefaultFormatCodeSettings(),
-    undefined,
-    undefined,
-    undefined
-  )
-
-  if (D === undefined || token?.isCancellationRequested) return
+  if (D === undefined) return
 
   return {
     label: D.name,
@@ -202,47 +170,37 @@ export async function getCompletionEntryDetails(
   }
 }
 
-export async function getQuickInfoAtPosition(
+async function getQuickInfoAtPosition(
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
   token?: vscode.CancellationToken
 ): Promise<vscode.MarkdownString[]> {
-  if (token?.isCancellationRequested) return []
+  const consume = async (
+    _: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer,
+    code: string,
+    pos: sm.NullablePosition
+  ) => {
+    if (pos.line == null || pos.column == null || token?.isCancellationRequested) return
 
-  const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
-  const strWSM = sourceNode.toStringWithSourceMap({
-    file: cUtils.normalizePath(document.fileName, projectRoot)
-  })
+    const env = libUtils.logtime(utils.getVTSEnv, projectRoot, code)
 
-  if (token?.isCancellationRequested) return []
+    if (token?.isCancellationRequested) return
 
-  let pos: sm.NullablePosition = { line: null, column: null, lastColumn: null }
-  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    pos = consumer.generatedPositionFor({
-      source: cUtils.normalizePath(document.fileName, projectRoot),
-      line: position.line + 1,
-      column: position.character
-    })
-  })
-
-  if (pos.line == null || pos.column == null || token?.isCancellationRequested) return []
-
-  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
-
-  if (token?.isCancellationRequested) return []
-
-  const QI = libUtils.logtime(
-    env.languageService.getQuickInfoAtPosition,
-    utils.bundle,
-    ts.getPositionOfLineAndCharacter(
-      env.getSourceFile(utils.bundle) as ts.SourceFileLike,
-      pos.line - 1,
-      position.character
+    return libUtils.logtime(
+      env.languageService.getQuickInfoAtPosition,
+      utils.bundle,
+      ts.getPositionOfLineAndCharacter(
+        env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+        pos.line - 1,
+        position.character
+      )
     )
-  )
+  }
 
-  if (QI === undefined || token?.isCancellationRequested) return []
+  const QI = await utils.consumeScriptModule(document, position, projectRoot, consume, token)
+
+  if (QI === undefined) return []
 
   return [
     new vscode.MarkdownString()
@@ -253,51 +211,41 @@ export async function getQuickInfoAtPosition(
   ]
 }
 
-export async function getSignatureHelpItems(
+async function getSignatureHelpItems(
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
   token?: vscode.CancellationToken
   // TODO: все фичи привести к одному АПИ
 ): Promise<vscode.ProviderResult<vscode.SignatureHelp>> {
-  if (token?.isCancellationRequested) return
+  const consume = async (
+    _: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer,
+    code: string,
+    pos: sm.NullablePosition
+  ) => {
+    if (pos.line == null || pos.column == null || token?.isCancellationRequested) return
 
-  const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
-  const strWSM = sourceNode.toStringWithSourceMap({
-    file: cUtils.normalizePath(document.fileName, projectRoot)
-  })
+    const env = libUtils.logtime(utils.getVTSEnv, projectRoot, code)
 
-  if (token?.isCancellationRequested) return
+    if (token?.isCancellationRequested) return
 
-  let pos: sm.NullablePosition = { line: null, column: null, lastColumn: null }
-  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    pos = consumer.generatedPositionFor({
-      source: cUtils.normalizePath(document.fileName, projectRoot),
-      line: position.line + 1,
-      column: position.character
-    })
-  })
+    return libUtils.logtime(
+      env.languageService.getSignatureHelpItems,
+      utils.bundle,
+      ts.getPositionOfLineAndCharacter(
+        env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+        pos.line - 1,
+        position.character
+      ),
+      {
+        triggerReason: { kind: 'retrigger' }
+      }
+    )
+  }
 
-  if (pos.line == null || pos.column == null || token?.isCancellationRequested) return
+  const H = await utils.consumeScriptModule(document, position, projectRoot, consume, token)
 
-  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
-
-  if (token?.isCancellationRequested) return
-
-  const H = libUtils.logtime(
-    env.languageService.getSignatureHelpItems,
-    utils.bundle,
-    ts.getPositionOfLineAndCharacter(
-      env.getSourceFile(utils.bundle) as ts.SourceFileLike,
-      pos.line - 1,
-      position.character
-    ),
-    {
-      triggerReason: { kind: 'retrigger' }
-    }
-  )
-
-  if (H === undefined || !H.items.length || token?.isCancellationRequested) return
+  if (H === undefined || !H.items.length) return
 
   const signatures = H.items.map<vscode.SignatureInformation>(i => ({
     label:
@@ -326,7 +274,7 @@ export async function getSignatureHelpItems(
  * @param token optional cancellation token
  * @param source optional normalized path of TextDocument ot override source entry for proxies bundle position ({@link document} - default source)
  */
-export async function getReferencesAtPosition(
+async function getReferencesAtPosition(
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
@@ -334,63 +282,44 @@ export async function getReferencesAtPosition(
   source?: cUtils.TNormalizedPath,
   clearVTS?: boolean
 ): Promise<wgl.SymbolEntry[]> {
-  if (utils.isCancelled(token)) return []
+  const consume = async (
+    consumer: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer,
+    code: string,
+    pos: sm.NullablePosition
+  ) => {
+    if (pos.line == null || pos.column == null || utils.isCancelled(token)) return
 
-  const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
-  const strWSM = sourceNode.toStringWithSourceMap({
-    file: cUtils.normalizePath(document.fileName, projectRoot)
-  })
+    const env = libUtils.logtime(utils.getVTSEnv, projectRoot, code, clearVTS ? false : undefined)
 
-  if (utils.isCancelled(token)) return []
+    if (utils.isCancelled(token)) return
 
-  let pos: sm.NullablePosition = { line: null, column: null, lastColumn: null }
-  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
-    pos = consumer.generatedPositionFor({
-      source: source ?? cUtils.normalizePath(document.fileName, projectRoot),
-      line: position.line + 1,
-      column: position.character
-    })
-  })
-
-  if (pos.line == null || pos.column == null || utils.isCancelled(token)) return []
-
-  const env = libUtils.logtime(
-    utils.getVTSEnv,
-    projectRoot,
-    strWSM.code,
-    clearVTS ? false : undefined
-  )
-
-  if (utils.isCancelled(token)) return []
-
-  const R = libUtils.logtime(
-    env.languageService.getReferencesAtPosition,
-    utils.bundle,
-    ts.getPositionOfLineAndCharacter(
-      env.getSourceFile(utils.bundle) as ts.SourceFileLike,
-      pos.line - 1,
-      position.character
+    const R = libUtils.logtime(
+      env.languageService.getReferencesAtPosition,
+      utils.bundle,
+      ts.getPositionOfLineAndCharacter(
+        env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+        pos.line - 1,
+        position.character
+      )
     )
-  )
 
-  if (R === undefined || !R.length || utils.isCancelled(token)) return []
+    if (R === undefined || !R.length || utils.isCancelled(token)) return []
 
-  const sourceR: wgl.SymbolEntry[] = []
-  const forConsumer: [ts.ReferenceEntry, ts.LineAndCharacter][] = []
-  for (const br of R) {
-    const sf = env.getSourceFile(br.fileName) as ts.SourceFileLike
-    const lnCh = libUtils.logtime(ts.getLineAndCharacterOfPosition, sf, br.textSpan.start)
+    const sourceR: wgl.SymbolEntry[] = []
+    const forConsumer: [ts.ReferenceEntry, ts.LineAndCharacter][] = []
+    for (const br of R) {
+      const sf = env.getSourceFile(br.fileName) as ts.SourceFileLike
+      const lnCh = libUtils.logtime(ts.getLineAndCharacterOfPosition, sf, br.textSpan.start)
 
-    if (br.fileName === utils.bundle) {
-      forConsumer.push([br, lnCh])
-    } else {
-      const { line, character: column } = lnCh
-      const source = path.join('node_modules', '@types', 'wglscript', 'generated', br.fileName)
-      sourceR.push({ source, line, column, length: br.textSpan.length })
+      if (br.fileName === utils.bundle) {
+        forConsumer.push([br, lnCh])
+      } else {
+        const { line, character: column } = lnCh
+        const source = path.join('node_modules', '@types', 'wglscript', 'generated', br.fileName)
+        sourceR.push({ source, line, column, length: br.textSpan.length })
+      }
     }
-  }
 
-  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
     forConsumer.map(record => {
       const length = record[0].textSpan.length
       const { line: ln, character: column } = record[1]
@@ -399,62 +328,63 @@ export async function getReferencesAtPosition(
       if (source == null || line == null) return
       sourceR.push({ source, column, length, line: line - 1 })
     })
-  })
 
-  if (utils.isCancelled(token)) return []
+    if (utils.isCancelled(token)) return
 
-  return sourceR
+    return sourceR
+  }
+
+  return (
+    (await utils.consumeScriptModule(document, position, projectRoot, consume, token, source)) || []
+  )
 }
 
-export async function getNavigationBarItems(
+async function getNavigationBarItems(
   document: Pick<vscode.TextDocument, 'fileName'>,
   projectRoot: string,
   token?: vscode.CancellationToken,
   includeWorkspaceSymbols?: true
 ): Promise<vscode.ProviderResult<vscode.SymbolInformation[]>> {
-  if (token?.isCancellationRequested) return
+  const consume = async (
+    consumer: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer,
+    code: string
+  ) => {
+    const env = libUtils.logtime(utils.getVTSEnv, projectRoot, code)
+    const NT = [libUtils.logtime(env.languageService.getNavigationTree, utils.bundle)]
 
-  const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
-  const documentN = cUtils.normalizePath(document.fileName, projectRoot)
-  const strWSM = sourceNode.toStringWithSourceMap({
-    file: cUtils.normalizePath(document.fileName, projectRoot)
-  })
+    if (NT === undefined || !NT.length || token?.isCancellationRequested) return
 
-  if (token?.isCancellationRequested) return
+    const sourceSymbols: vscode.SymbolInformation[] = []
+    const sf = env.getSourceFile(utils.bundle) as ts.SourceFileLike
+    const documentN = cUtils.normalizePath(document.fileName, projectRoot)
+    const forConsumer: Array<{
+      item: ts.NavigationTree
+      start: ts.LineAndCharacter
+      end: ts.LineAndCharacter
+      container?: string
+    }> = []
 
-  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
-  const NT = [libUtils.logtime(env.languageService.getNavigationTree, utils.bundle)]
+    function collectNavBarItemsWithLineAndCharacter(
+      items: ts.NavigationTree[],
+      container?: string
+    ) {
+      if (token?.isCancellationRequested) return
 
-  if (NT === undefined || !NT.length || token?.isCancellationRequested) return
+      for (const item of items) {
+        const pos = item.spans.at(0)
 
-  const sourceSymbols: vscode.SymbolInformation[] = []
-  const sf = env.getSourceFile(utils.bundle) as ts.SourceFileLike
-  const forConsumer: Array<{
-    item: ts.NavigationTree
-    start: ts.LineAndCharacter
-    end: ts.LineAndCharacter
-    container?: string
-  }> = []
+        if (pos) {
+          const start = ts.getLineAndCharacterOfPosition(sf, pos.start)
+          const end = ts.getLineAndCharacterOfPosition(sf, pos.start + pos.length)
+          container && forConsumer.push({ item, start, end, container })
+        }
 
-  function collectNavBarItemsWithLineAndCharacter(items: ts.NavigationTree[], container?: string) {
-    if (token?.isCancellationRequested) return
-
-    for (const item of items) {
-      const pos = item.spans.at(0)
-
-      if (pos) {
-        const start = ts.getLineAndCharacterOfPosition(sf, pos.start)
-        const end = ts.getLineAndCharacterOfPosition(sf, pos.start + pos.length)
-        container && forConsumer.push({ item, start, end, container })
+        if (item.childItems) collectNavBarItemsWithLineAndCharacter(item.childItems, item.text)
       }
-
-      if (item.childItems) collectNavBarItemsWithLineAndCharacter(item.childItems, item.text)
     }
-  }
 
-  collectNavBarItemsWithLineAndCharacter(NT)
+    collectNavBarItemsWithLineAndCharacter(NT)
 
-  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
     forConsumer.map(({ start, end, item, container }) => {
       if (token?.isCancellationRequested) return
 
@@ -486,11 +416,13 @@ export async function getNavigationBarItems(
         )
       )
     })
-  })
 
-  if (token?.isCancellationRequested) return
+    if (token?.isCancellationRequested) return
 
-  return sourceSymbols
+    return sourceSymbols
+  }
+
+  return await utils.consumeScriptModule(document, null, projectRoot, consume, token)
 }
 
 /**
@@ -500,7 +432,7 @@ export async function getNavigationBarItems(
  * @param projectRoot root system path of project
  * @param token optional cancellation token
  */
-export async function getReferencesAtPositionInProject(
+async function getReferencesAtPositionInProject(
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
@@ -522,11 +454,13 @@ export async function getReferencesAtPositionInProject(
     return definitions
   }
 
-  const sourceNode = await compile(globalScript, { projectRoot, modules: [] })
-  const strWSM = sourceNode.toStringWithSourceMap({
-    file: libUtils.getExtOption<string>('globalScript.path')
-  })
-  const globalDeps = (await new sm.SourceMapConsumer(strWSM.map.toString())).sources
+  const globalDeps =
+    (await utils.consumeScriptModule(
+      { fileName: globalScript },
+      null,
+      projectRoot,
+      c => c.sources
+    )) || []
   const D = definitions[0]
 
   // 1.1 дефинишн находится в либе .d.ts
@@ -540,7 +474,6 @@ export async function getReferencesAtPositionInProject(
     // 1.2 дефинишн находится в глобалскрипте
     // TODO: исключить зависимости глобалскрипта, нужен хойстинг по полученным файлам
     modules = await utils.getJsFiles(projectRoot, searchPattern)
-    modules
   } else {
     // 1.3 дефинишн находится в локальном скрипте
     modules = await getModuleReferences(
@@ -612,8 +545,8 @@ export async function getReferencesAtPositionInProject(
   return Array.from(projectRefs.values()).map<wgl.SymbolEntry>(r => JSON.parse(r))
 }
 
-export const moduleReferencesStorage = new Map<cUtils.TNormalizedPath, cUtils.TNormalizedPath[]>()
-export const modulesWithError = new Set<string>()
+const moduleReferencesStorage = new Map<cUtils.TNormalizedPath, cUtils.TNormalizedPath[]>()
+const modulesWithError = new Set<string>()
 
 /**
  * Get module references
@@ -622,7 +555,7 @@ export const modulesWithError = new Set<string>()
  * @param token optional cancellation token
  * @returns
  */
-export async function getModuleReferences(
+async function getModuleReferences(
   module: cUtils.TNormalizedPath,
   projectRoot: string,
   token?: vscode.CancellationToken,
@@ -749,90 +682,88 @@ export async function getModuleReferences(
   return moduleReferences
 }
 
-export async function getSemanticDiagnostics(
+async function getDiagnostics(
   document: Pick<vscode.TextDocument, 'fileName'>,
   projectRoot: string,
   version: number
 ): Promise<Map<cUtils.TNormalizedPath, vscode.Diagnostic[]> | undefined> {
-  if (vscode.window.activeTextEditor?.document.version !== version) return
+  const consume = async (
+    consumer: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer,
+    code: string
+  ) => {
+    if (vscode.window.activeTextEditor?.document.version !== version) return
 
-  const sourceNode = await compile(document.fileName, { projectRoot, modules: [] })
-  const documentN = cUtils.normalizePath(document.fileName, projectRoot)
+    const documentN = cUtils.normalizePath(document.fileName, projectRoot)
+    const env = libUtils.logtime(utils.getVTSEnv, projectRoot, code)
 
-  if (vscode.window.activeTextEditor?.document.version !== version) return
+    if (vscode.window.activeTextEditor?.document.version !== version) return
 
-  const strWSM = sourceNode.toStringWithSourceMap({ file: documentN })
-  const env = libUtils.logtime(utils.getVTSEnv, projectRoot, strWSM.code)
-
-  if (vscode.window.activeTextEditor?.document.version !== version) return
-
-  const semanticD = libUtils.logtime(env.languageService.getSemanticDiagnostics, utils.bundle)
-  const syntacticD = libUtils.logtime(env.languageService.getSyntacticDiagnostics, utils.bundle)
-  const sourceD = new Map<cUtils.TNormalizedPath, vscode.Diagnostic[]>()
-  const allowedErrorCodes = libUtils.getExtOption<number[]>(
-    'intellisense.diagnostics.allowedErrorCodes'
-  )
-  const forConsumer: {
-    code: number
-    message: string
-    category: vscode.DiagnosticSeverity
-    start: ts.LineAndCharacter
-    end: ts.LineAndCharacter
-  }[] = []
-
-  for (const d of syntacticD) {
-    if (
-      !d.file ||
-      !d.start ||
-      d.file.fileName !== utils.bundle ||
-      !d.length ||
-      d.start < cUtils.gls.code.length /** location at global script */
+    const semanticD = libUtils.logtime(env.languageService.getSemanticDiagnostics, utils.bundle)
+    const syntacticD = libUtils.logtime(env.languageService.getSyntacticDiagnostics, utils.bundle)
+    const sourceD = new Map<cUtils.TNormalizedPath, vscode.Diagnostic[]>()
+    const allowedErrorCodes = libUtils.getExtOption<number[]>(
+      'intellisense.diagnostics.allowedErrorCodes'
     )
-      continue
+    const forConsumer: {
+      code: number
+      message: string
+      category: vscode.DiagnosticSeverity
+      start: ts.LineAndCharacter
+      end: ts.LineAndCharacter
+    }[] = []
 
-    if (vscode.window.activeTextEditor?.document.version !== version) break
+    for (const d of syntacticD) {
+      if (
+        !d.file ||
+        !d.start ||
+        d.file.fileName !== utils.bundle ||
+        !d.length ||
+        d.start < cUtils.gls.code.length /** location at global script */
+      )
+        continue
 
-    const start = libUtils.logtime(ts.getLineAndCharacterOfPosition, d.file, d.start)
-    const end = libUtils.logtime(ts.getLineAndCharacterOfPosition, d.file, d.start + d.length)
-    forConsumer.push({
-      message: typeof d.messageText === 'string' ? d.messageText : d.messageText.messageText,
-      category: allowedErrorCodes.includes(d.code)
-        ? vscode.DiagnosticSeverity.Warning
-        : utils.TSDiagnosticCategoryToVSCodeDiagnosticSeverity(d.category),
-      code: d.code,
-      start,
-      end
-    })
-  }
+      if (vscode.window.activeTextEditor?.document.version !== version) break
 
-  for (const d of semanticD) {
-    if (
-      !d.file ||
-      !d.start ||
-      d.file.fileName !== utils.bundle ||
-      !d.length ||
-      d.start < cUtils.gls.code.length /** location at global script */
-    )
-      continue
+      const start = libUtils.logtime(ts.getLineAndCharacterOfPosition, d.file, d.start)
+      const end = libUtils.logtime(ts.getLineAndCharacterOfPosition, d.file, d.start + d.length)
+      forConsumer.push({
+        message: typeof d.messageText === 'string' ? d.messageText : d.messageText.messageText,
+        category: allowedErrorCodes.includes(d.code)
+          ? vscode.DiagnosticSeverity.Warning
+          : utils.TSDiagnosticCategoryToVSCodeDiagnosticSeverity(d.category),
+        code: d.code,
+        start,
+        end
+      })
+    }
 
-    if (vscode.window.activeTextEditor?.document.version !== version) break
+    for (const d of semanticD) {
+      if (
+        !d.file ||
+        !d.start ||
+        d.file.fileName !== utils.bundle ||
+        !d.length ||
+        d.start < cUtils.gls.code.length /** location at global script */
+      )
+        continue
 
-    const start = libUtils.logtime(ts.getLineAndCharacterOfPosition, d.file, d.start)
-    const end = libUtils.logtime(ts.getLineAndCharacterOfPosition, d.file, d.start + d.length)
-    forConsumer.push({
-      message: typeof d.messageText === 'string' ? d.messageText : d.messageText.messageText,
-      category: allowedErrorCodes.includes(d.code)
-        ? vscode.DiagnosticSeverity.Warning
-        : utils.TSDiagnosticCategoryToVSCodeDiagnosticSeverity(d.category),
-      code: d.code,
-      start,
-      end
-    })
-  }
+      if (vscode.window.activeTextEditor?.document.version !== version) break
 
-  if (vscode.window.activeTextEditor?.document.version !== version) return
+      const start = libUtils.logtime(ts.getLineAndCharacterOfPosition, d.file, d.start)
+      const end = libUtils.logtime(ts.getLineAndCharacterOfPosition, d.file, d.start + d.length)
+      forConsumer.push({
+        message: typeof d.messageText === 'string' ? d.messageText : d.messageText.messageText,
+        category: allowedErrorCodes.includes(d.code)
+          ? vscode.DiagnosticSeverity.Warning
+          : utils.TSDiagnosticCategoryToVSCodeDiagnosticSeverity(d.category),
+        code: d.code,
+        start,
+        end
+      })
+    }
 
-  await sm.SourceMapConsumer.with(strWSM.map.toJSON(), null, consumer => {
+    if (vscode.window.activeTextEditor?.document.version !== version) return
+
     for (const { start, end, category, code, message } of forConsumer) {
       if (vscode.window.activeTextEditor?.document.version !== version) break
 
@@ -864,42 +795,56 @@ export async function getSemanticDiagnostics(
         range: new vscode.Range(posS.line - 1, start.character, posE.line - 1, end.character)
       })
     }
-  })
 
-  if (vscode.window.activeTextEditor?.document.version !== version) return
+    if (vscode.window.activeTextEditor?.document.version !== version) return
 
-  return sourceD
+    return sourceD
+  }
+
+  return await utils.consumeScriptModule(document, null, projectRoot, consume)
 }
 
-export async function getFormattingEditsForDocument(
+async function getFormattingEditsForDocument(
   document: Pick<vscode.TextDocument, 'fileName'>,
   projectRoot: string,
   endPos: vscode.Position,
   token?: vscode.CancellationToken
 ): Promise<vscode.ProviderResult<vscode.TextEdit[]>> {
-  if (token?.isCancellationRequested) return
+  const consume = async (
+    _: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer,
+    __: string,
+    ___: sm.NullablePosition,
+    code: string
+  ) => {
+    let config = await prettier.resolveConfig(path.join(projectRoot, '.prettierrc'))
 
-  const sourceNode = await compile(document.fileName, {
-    projectRoot,
-    modules: [],
-    skipAttachDependencies: true,
-    skipAttachGlobalScript: true
-  })
-  const strWSM = sourceNode.toStringWithSourceMap({
-    file: cUtils.normalizePath(document.fileName, projectRoot)
-  })
+    if (config) config = { ...config, parser: 'typescript' }
+    else config = { parser: 'typescript' }
 
-  if (token?.isCancellationRequested) return
+    if (token?.isCancellationRequested) return
 
-  let config = await prettier.resolveConfig(path.join(projectRoot, '.prettierrc'))
+    return [
+      {
+        newText: await prettier.format(code, config),
+        range: new vscode.Range(0, 0, endPos.line, endPos.character + 1)
+      }
+    ]
+  }
 
-  if (config) config = { ...config, parser: 'typescript' }
-  else config = { parser: 'typescript' }
-
-  return [
-    {
-      newText: await prettier.format(strWSM.code, config),
-      range: new vscode.Range(0, 0, endPos.line, endPos.character + 1)
-    }
-  ]
+  return await utils.consumeScriptModule(document, null, projectRoot, consume)
 }
+
+export const intellisense = utils.track({
+  getDiagnostics,
+  modulesWithError,
+  moduleReferencesStorage,
+  getDefinitionInfoAtPosition,
+  getCompletionsAtPosition,
+  getCompletionEntryDetails,
+  getQuickInfoAtPosition,
+  getSignatureHelpItems,
+  getReferencesAtPositionInProject,
+  getReferencesAtPosition,
+  getNavigationBarItems,
+  getFormattingEditsForDocument
+})
