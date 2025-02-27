@@ -86,7 +86,6 @@ export async function attachGlobalScript(
   chunks: Array<string | sm.SourceNode>
 ) {
   if (
-    !libUtils.getExtOption<boolean>('globalScript.enable') ||
     libUtils.getExtOption<string>('globalScript.path') == null ||
     libUtils.getExtOption<string>('globalScript.path')?.length === 0
   )

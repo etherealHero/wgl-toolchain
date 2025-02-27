@@ -8,7 +8,12 @@ import { bundleInfoRepository } from './intellisense/utils'
 import type * as wgl from './intellisense/wglscript'
 
 let diagnosticsCollection: vscode.DiagnosticCollection
-let diagnosticsCollectionBusy = false
+let lastEdit: Date = new Date()
+
+async function debaunceChangeTextDocument(signal: Date) {
+  await new Promise(r => setTimeout(r, 2000))
+  if (signal === lastEdit) return true
+}
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('Extension "wgl-toolchain" is now active')
@@ -33,14 +38,12 @@ export function activate(context: vscode.ExtensionContext) {
       const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
 
       if (wsPath && activeDoc.languageId === 'javascript') {
-        intellisense
-          .getDiagnostics({ fileName: activeDoc.fileName }, wsPath, activeDoc.version)
-          .then(diagnostics => {
-            if (!diagnostics) return
-            diagnosticsCollection.clear()
-            for (const [m, d] of diagnostics)
-              diagnosticsCollection.set(vscode.Uri.file(path.join(wsPath, m)), d)
-          })
+        intellisense.getDiagnostics({ fileName: activeDoc.fileName }, wsPath).then(diagnostics => {
+          if (!diagnostics) return
+          diagnosticsCollection.clear()
+          for (const [m, d] of diagnostics)
+            diagnosticsCollection.set(vscode.Uri.file(path.join(wsPath, m)), d)
+        })
       }
     }
 
@@ -56,14 +59,15 @@ export function activate(context: vscode.ExtensionContext) {
         const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
         if (!wsPath) return
         await new Promise(r => setTimeout(r, 1000))
+        if (vscode.window.activeTextEditor?.document.version !== e.document.version) return
 
         const diagnostics = await intellisense.getDiagnostics(
           { fileName: activeDoc.fileName },
-          wsPath,
-          activeDoc.version
+          wsPath
         )
 
         if (!diagnostics) return
+        if (vscode.window.activeTextEditor?.document.version !== e.document.version) return
 
         diagnosticsCollection.clear()
         for (const [m, d] of diagnostics)
@@ -75,6 +79,8 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.workspace.onDidChangeTextDocument(async e => {
         if (e.document.languageId !== 'javascript') return
         if (!e.document.isDirty) return // TODO: проверить когда гит откатывается проходит ли триггер
+
+        lastEdit = new Date()
 
         const normalized = compilerUtils.normalizePath(e.document.uri.fsPath, projectRoot)
 
@@ -109,19 +115,22 @@ export function activate(context: vscode.ExtensionContext) {
           if (e.document.fileName === activeDoc.fileName) {
             const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
 
-            if (wsPath && !diagnosticsCollectionBusy) {
-              diagnosticsCollectionBusy = true
-              await new Promise(r => setTimeout(r, 2000))
+            if (wsPath) {
+              if (vscode.window.activeTextEditor?.document.version !== e.document.version) return
 
-              intellisense
-                .getDiagnostics({ fileName: activeDoc.fileName }, wsPath, e.document.version)
-                .then(diagnostics => {
-                  if (!diagnostics) return
-                  diagnosticsCollection.clear()
-                  for (const [m, d] of diagnostics)
-                    diagnosticsCollection.set(vscode.Uri.file(path.join(wsPath, m)), d)
-                  diagnosticsCollectionBusy = false
-                })
+              debaunceChangeTextDocument(lastEdit).then(
+                passed =>
+                  passed &&
+                  intellisense
+                    .getDiagnostics({ fileName: activeDoc.fileName }, wsPath)
+                    .then(diagnostics => {
+                      if (!diagnostics) return
+
+                      diagnosticsCollection.clear()
+                      for (const [m, d] of diagnostics)
+                        diagnosticsCollection.set(vscode.Uri.file(path.join(wsPath, m)), d)
+                    })
+              )
             }
           }
         }
@@ -311,26 +320,19 @@ export function activate(context: vscode.ExtensionContext) {
             .text.slice(wordPos.start.character, wordPos.end.character)
         }
 
-        let refs: wgl.SymbolEntry[] = []
         try {
-          if (
-            utils.getExtOption<boolean>('intellisense.workspaceFeatures.findAllReferencesInProject')
-          ) {
-            refs = await intellisense.getReferencesAtPositionInProject(
-              { fileName: document.fileName },
-              position,
-              wsPath,
-              token,
-              new RegExp(word, 'm')
-            )
-          } else {
-            refs = await intellisense.getReferencesAtPosition(
-              { fileName: document.fileName },
-              position,
-              wsPath,
-              token
-            )
-          }
+          const refs = await intellisense.getReferencesAtPositionInProject(
+            { fileName: document.fileName },
+            position,
+            wsPath,
+            token,
+            new RegExp(word, 'm')
+          )
+
+          return refs.map(d => ({
+            uri: vscode.Uri.file(path.join(wsPath, d.source)),
+            range: new vscode.Range(d.line, d.column, d.line, d.column + d.length)
+          }))
         } catch (error) {
           console.log(`ERROR: ${error}`)
           compilerUtils.astStorage.clear()
@@ -339,11 +341,6 @@ export function activate(context: vscode.ExtensionContext) {
           compilerUtils.gls.modules = new Map()
           return
         }
-
-        return refs.map(d => ({
-          uri: vscode.Uri.file(path.join(wsPath, d.source)),
-          range: new vscode.Range(d.line, d.column, d.line, d.column + d.length)
-        }))
       }
     })
   )
@@ -366,28 +363,26 @@ export function activate(context: vscode.ExtensionContext) {
             .text.slice(wordPos.start.character, wordPos.end.character)
         }
 
-        let refs: wgl.SymbolEntry[] = []
         try {
-          if (
-            utils.getExtOption<boolean>(
-              'intellisense.workspaceFeatures.renameAllReferencesInProject'
+          const refs = await intellisense.getReferencesAtPositionInProject(
+            { fileName: document.fileName },
+            position,
+            wsPath,
+            token,
+            new RegExp(word, 'm')
+          )
+
+          const wsEdit = new vscode.WorkspaceEdit()
+
+          refs.map(d =>
+            wsEdit.replace(
+              vscode.Uri.file(path.join(wsPath, d.source)),
+              new vscode.Range(d.line, d.column, d.line, d.column + d.length),
+              newName
             )
-          ) {
-            refs = await intellisense.getReferencesAtPositionInProject(
-              { fileName: document.fileName },
-              position,
-              wsPath,
-              token,
-              new RegExp(word, 'm')
-            )
-          } else {
-            refs = await intellisense.getReferencesAtPosition(
-              { fileName: document.fileName },
-              position,
-              wsPath,
-              token
-            )
-          }
+          )
+
+          return wsEdit
         } catch (error) {
           console.log(`ERROR: ${error}`)
           compilerUtils.astStorage.clear()
@@ -396,18 +391,6 @@ export function activate(context: vscode.ExtensionContext) {
           compilerUtils.gls.modules = new Map()
           return
         }
-
-        const wsEdit = new vscode.WorkspaceEdit()
-
-        refs.map(d =>
-          wsEdit.replace(
-            vscode.Uri.file(path.join(wsPath, d.source)),
-            new vscode.Range(d.line, d.column, d.line, d.column + d.length),
-            newName
-          )
-        )
-
-        return wsEdit
       },
       prepareRename: async (document, position, token) => {
         const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
@@ -453,11 +436,13 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         try {
-          return await intellisense.getNavigationBarItems(
-            { fileName: document.fileName },
-            wsPath,
-            token
-          )
+          if (await debaunceChangeTextDocument(lastEdit)) {
+            return await intellisense.getNavigationBarItems(
+              { fileName: document.fileName },
+              wsPath,
+              token
+            )
+          }
         } catch (error) {
           console.log(`ERROR: ${error}`)
           compilerUtils.astStorage.clear()

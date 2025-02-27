@@ -296,69 +296,86 @@ export function chunkedArray<T>(arr: Array<T>, chunkSize: number) {
 }
 
 interface IBundleInfo {
+  map: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer
   bundleContent: string
   entryContent: string
-  consumer: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer
   dependencies: cUtils.TNormalizedPath[]
 }
 
 export const bundleInfoRepository = new Map<cUtils.TNormalizedPath, IBundleInfo>()
 
+export interface IConsumerProps {
+  map: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer
+  bundlePosition: sm.NullablePosition
+  bundleContent: string
+  entryContent: string
+}
+
+type TConsumer<T> = (props: IConsumerProps) => Promise<T> | T
+
+interface IConsumeScriptModuleProps<T> {
+  document: Pick<vscode.TextDocument, 'fileName'>
+  projectRoot: string
+  consumer: TConsumer<T>
+  position?: Pick<vscode.Position, 'line' | 'character'>
+  token?: undefined | vscode.CancellationToken | (vscode.CancellationToken | undefined)[]
+
+  /**
+   * optional normalized path of TextDocument ot override source entry for proxies bundle position ({@link document} - default source)
+   */
+  source?: cUtils.TNormalizedPath
+}
+
 // TODO: переделать параметры в объект
 export async function consumeScriptModule<T>(
-  document: Pick<vscode.TextDocument, 'fileName'>,
-  position: Pick<vscode.Position, 'line' | 'character'> | null,
-  projectRoot: string,
-  consumer: (
-    consumer: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer,
-    bundle: string,
-    bundlePosition: sm.NullablePosition,
-    entryContent: string
-  ) => Promise<T> | T,
-  token?: undefined | vscode.CancellationToken | (vscode.CancellationToken | undefined)[],
-  source?: cUtils.TNormalizedPath
+  props: IConsumeScriptModuleProps<T>
 ): Promise<T | undefined> {
-  if (isCancelled(token)) return
+  if (isCancelled(props.token)) return
 
-  const entry = cUtils.normalizePath(document.fileName, projectRoot)
+  const entry = cUtils.normalizePath(props.document.fileName, props.projectRoot)
   let bundleContent = ''
   let entryContent = ''
-  let sourceMapConsumer: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer | undefined
+  let map: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer | undefined
 
   if (bundleInfoRepository.has(entry)) {
     const bundleInfo = bundleInfoRepository.get(entry) as IBundleInfo
 
     bundleContent = bundleInfo.bundleContent
-    sourceMapConsumer = bundleInfo.consumer
+    map = bundleInfo.map
     entryContent = bundleInfo.entryContent
   } else {
-    const sn = await compile(document.fileName, { projectRoot, modules: [] })
+    const sn = await compile(props.document.fileName, {
+      projectRoot: props.projectRoot,
+      modules: []
+    })
+
+    if (isCancelled(props.token)) return
+
     const codeWithSourceMap = sn.toStringWithSourceMap({ file: entry })
     const rawSourceMap = codeWithSourceMap.map.toString()
-    const snEntry = await compile(document.fileName, {
-      projectRoot,
+    const snEntry = await compile(props.document.fileName, {
+      projectRoot: props.projectRoot,
       modules: [],
       skipAttachDependencies: true,
       skipAttachGlobalScript: true
     })
 
+    if (isCancelled(props.token)) return
+
     bundleContent = codeWithSourceMap.code
     entryContent = snEntry.toStringWithSourceMap({ file: entry }).code
-    sourceMapConsumer = await new sm.SourceMapConsumer(rawSourceMap)
+    map = await new sm.SourceMapConsumer(rawSourceMap)
 
-    bundleInfoRepository.set(entry, {
-      consumer: sourceMapConsumer,
-      dependencies: sourceMapConsumer.sources,
-      bundleContent,
-      entryContent
-    })
+    if (isCancelled(props.token)) return
+
+    bundleInfoRepository.set(entry, { map, dependencies: map.sources, bundleContent, entryContent })
   }
 
-  const bundlePosition = position
-    ? sourceMapConsumer.generatedPositionFor({
-        source: source ?? entry,
-        line: position.line + 1,
-        column: position.character
+  const bundlePosition = props.position
+    ? map.generatedPositionFor({
+        source: props.source ?? entry,
+        line: props.position.line + 1,
+        column: props.position.character
       })
     : { line: -1, column: -1, lastColumn: -1 }
 
@@ -366,13 +383,13 @@ export async function consumeScriptModule<T>(
     !bundlePosition ||
     bundlePosition.line == null ||
     bundlePosition.column == null ||
-    isCancelled(token)
+    isCancelled(props.token)
   )
     return
 
-  const resolve = await consumer(sourceMapConsumer, bundleContent, bundlePosition, entryContent)
+  const resolve = await props.consumer({ map, bundleContent, bundlePosition, entryContent })
 
-  if (isCancelled(token)) return
+  if (isCancelled(props.token)) return
 
   return resolve
 }
