@@ -1,5 +1,18 @@
 # Change Log
 
+## 0.1.2
+
+- diagnostics extension settings
+- dettach virtual TypeScript environment on change text document
+- provide folding ranges
+- go to import, include module definition
+- e2e definition tests
+- e2e formatting test
+
+## 0.1.1
+
+- diagnostics fixes
+
 ## 0.1.0
 
 - formatter

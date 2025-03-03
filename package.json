@@ -2,7 +2,7 @@
   "name": "wgl-toolchain",
   "displayName": "WGLScript toolchain",
   "description": "WGLScript formatter, linter, intellisense for VS Code",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "etherealhero",
   "repository": "https://github.com/Microsoft/vscode-extension-samples/wgl-toolchain",
   "keywords": ["wglscript", "LSP", "formatter", "linter", "intellisense"],
@@ -12,7 +12,7 @@
   "engines": {
     "vscode": "^1.74.0"
   },
-  "categories": ["Other"],
+  "categories": ["Programming Languages", "Formatters"],
   "activationEvents": ["onLanguage:javascript"],
   "main": "./out/extension.js",
   "scripts": {
@@ -33,8 +33,8 @@
         "wglscript.intellisense.diagnostics.allowedErrorCodes": {
           "type": "array",
           "scope": "resource",
-          "default": [2339, 2367, 7006],
-          "markdownDescription": "Cast _error_ diagnostics to _warning_ diagnostics by list of [TypeScript Error Codes](https://typescript.tv/errors/). You can enter the code to know it, hover on the diagnostic in the document and in the pop-up prompt copy the code. Defaults are \n\n**2339**: _Property 'width' does not exist on type 'Shape'_\n\n**2367**: _This comparison appears to be unintentional because the types 'boolean' and 'number' have no overlap_\n\n**7006**: Parameter 'person' implicitly has an 'any' type"
+          "default": [7006],
+          "markdownDescription": "Cast _error_ diagnostics as _warning_ diagnostics by list of [TypeScript Error Codes](https://typescript.tv/errors/). You can enter the code to know it, hover on the diagnostic in the document and in the pop-up prompt copy the code"
         },
         "wglscript.intellisense.requestDepthStrategy.localSymbols": {
           "type": "string",
@@ -60,14 +60,25 @@
         },
         "wglscript.intellisense.requestDepthStrategy.librarySymbols": {
           "type": "string",
-          "enum": ["bundle", "project"],
+          "enum": ["bundle"],
           "markdownEnumDescriptions": [
-            "Search library Symbol only in bundle of current script module",
-            "Search library Symbol in whole project"
+            "Search library Symbol only in bundle of current script module"
           ],
-          "enumItemLabels": ["Bundle scope", "Project"],
+          "enumItemLabels": ["Bundle scope"],
           "default": "bundle",
           "markdownDescription": "The request processing strategy (find all references, rename features) in the Intelligent Service for Symbol that **defined** in d.ts files (node_modules/@types)"
+        },
+        "wglscript.intellisense.requestStrategy.diagnostics": {
+          "type": "string",
+          "enum": ["onchange", "onsave", "disabled"],
+          "markdownEnumDescriptions": [
+            "Calculate diagnostics **on change** text document",
+            "Calculate diagnostics **on save** text document",
+            "Disable diagnostics"
+          ],
+          "enumItemLabels": ["On Change", "On Save", "Disabled"],
+          "default": "onsave",
+          "markdownDescription": "The request processing strategy for diagnostics in the Intelligent Service for active text document"
         },
         "wglscript.intellisense.requestDepthStrategy.sliceModuleReferencesLength": {
           "type": "integer",

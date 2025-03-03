@@ -5,3 +5,6 @@ node_modules
 
 src/compiler/parser.js
 .artifacts
+
+!src/test/intellisense/node_modules
+generated/

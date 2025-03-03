@@ -8,7 +8,7 @@ import * as vscode from 'vscode'
 import * as cUtils from '../compiler/utils'
 import * as libUtils from '../utils'
 
-import { compile } from '../compiler/compiler'
+import { type AST, type TNode, compile } from '../compiler/compiler'
 
 /** Bundle file name */
 export const bundle = 'bundle.js'
@@ -32,14 +32,16 @@ export const compilerOpts = {
 }
 
 /** Map-key: bundle hash */
-const VTSEnvStorage: Map<string, tsvfs.VirtualTypeScriptEnvironment> = new Map()
+export const VTSEnvStorage: Map<string, tsvfs.VirtualTypeScriptEnvironment> = new Map()
 
-export function getVTSEnv(
+function getVTSEnv(
   projectRoot: string,
   bundleContent: string,
-  cacheEnv?: boolean
+  cacheEnv: boolean
 ): tsvfs.VirtualTypeScriptEnvironment {
   const hash = libUtils.getHash(bundleContent)
+
+  console.log(`DEBUG vtsEnvStorage size is ${VTSEnvStorage.size}`)
 
   if (VTSEnvStorage.has(hash)) {
     return VTSEnvStorage.get(hash) as tsvfs.VirtualTypeScriptEnvironment
@@ -59,7 +61,7 @@ export function getVTSEnv(
     compilerOpts
   )
 
-  if (!(cacheEnv === false)) VTSEnvStorage.set(hash, env)
+  if (cacheEnv) VTSEnvStorage.set(hash, env)
 
   return env
 }
@@ -232,6 +234,21 @@ export function TSElementKindtoVSCodeSymbolKind(el: ts.ScriptElementKind): vscod
   }
 }
 
+export function TSOutliningSpanKindToVSCodeSymbolKind(
+  el: ts.OutliningSpanKind
+): vscode.FoldingRangeKind | undefined {
+  switch (el) {
+    case ts.OutliningSpanKind.Comment:
+      return vscode.FoldingRangeKind.Comment
+    case ts.OutliningSpanKind.Imports:
+      return vscode.FoldingRangeKind.Imports
+    case ts.OutliningSpanKind.Region:
+      return vscode.FoldingRangeKind.Region
+    default:
+      return
+  }
+}
+
 export function prettifyJSDoc(t: ts.JSDocTagInfo): string {
   return `_@${t.name}_ ${(t.text || []).map((p, i) => (i ? p.text.replace(/([<>])/g, '\\$1') : `**${p.text.replace(/([<>])/g, '\\$1')}**`)).join('')}`
 }
@@ -296,10 +313,12 @@ export function chunkedArray<T>(arr: Array<T>, chunkSize: number) {
 }
 
 interface IBundleInfo {
-  map: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer
   bundleContent: string
-  entryContent: string
   dependencies: cUtils.TNormalizedPath[]
+  entryContent: string
+  entryAst: AST<TNode>
+  map: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer
+  env?: tsvfs.VirtualTypeScriptEnvironment
 }
 
 export const bundleInfoRepository = new Map<cUtils.TNormalizedPath, IBundleInfo>()
@@ -309,16 +328,34 @@ export interface IConsumerProps {
   bundlePosition: sm.NullablePosition
   bundleContent: string
   entryContent: string
+  entryAst: AST<TNode>
+  env?: tsvfs.VirtualTypeScriptEnvironment
 }
 
 type TConsumer<T> = (props: IConsumerProps) => Promise<T> | T
 
 interface IConsumeScriptModuleProps<T> {
   document: Pick<vscode.TextDocument, 'fileName'>
+
   projectRoot: string
+
   consumer: TConsumer<T>
+
   position?: Pick<vscode.Position, 'line' | 'character'>
+
   token?: undefined | vscode.CancellationToken | (vscode.CancellationToken | undefined)[]
+
+  /**
+   * get TypeScript {@link tsvfs.VirtualTypeScriptEnvironment virtual environment}
+   * @default true
+   */
+  getTypeScriptEnvironment?: boolean
+
+  /**
+   * cache TypeScript {@link tsvfs.VirtualTypeScriptEnvironment virtual environment}
+   * @default true
+   */
+  cacheTypeScriptEnvironment?: boolean
 
   /**
    * optional normalized path of TextDocument ot override source entry for proxies bundle position ({@link document} - default source)
@@ -326,15 +363,17 @@ interface IConsumeScriptModuleProps<T> {
   source?: cUtils.TNormalizedPath
 }
 
-// TODO: переделать параметры в объект
 export async function consumeScriptModule<T>(
   props: IConsumeScriptModuleProps<T>
 ): Promise<T | undefined> {
   if (isCancelled(props.token)) return
+  if (props.getTypeScriptEnvironment === undefined) props.getTypeScriptEnvironment = true
+  if (props.cacheTypeScriptEnvironment === undefined) props.cacheTypeScriptEnvironment = true
 
   const entry = cUtils.normalizePath(props.document.fileName, props.projectRoot)
   let bundleContent = ''
   let entryContent = ''
+  let entryAst: AST<TNode> = []
   let map: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer | undefined
 
   if (bundleInfoRepository.has(entry)) {
@@ -343,6 +382,7 @@ export async function consumeScriptModule<T>(
     bundleContent = bundleInfo.bundleContent
     map = bundleInfo.map
     entryContent = bundleInfo.entryContent
+    entryAst = bundleInfo.entryAst
   } else {
     const sn = await compile(props.document.fileName, {
       projectRoot: props.projectRoot,
@@ -365,10 +405,17 @@ export async function consumeScriptModule<T>(
     bundleContent = codeWithSourceMap.code
     entryContent = snEntry.toStringWithSourceMap({ file: entry }).code
     map = await new sm.SourceMapConsumer(rawSourceMap)
+    entryAst = await cUtils.parseScriptModule(props.document.fileName, props.projectRoot)
 
     if (isCancelled(props.token)) return
 
-    bundleInfoRepository.set(entry, { map, dependencies: map.sources, bundleContent, entryContent })
+    bundleInfoRepository.set(entry, {
+      dependencies: map.sources,
+      bundleContent,
+      entryContent,
+      map,
+      entryAst
+    })
   }
 
   const bundlePosition = props.position
@@ -387,7 +434,20 @@ export async function consumeScriptModule<T>(
   )
     return
 
-  const resolve = await props.consumer({ map, bundleContent, bundlePosition, entryContent })
+  let env: tsvfs.VirtualTypeScriptEnvironment | undefined = undefined
+
+  if (props.getTypeScriptEnvironment) {
+    env = getVTSEnv(props.projectRoot, bundleContent, props.cacheTypeScriptEnvironment)
+  }
+
+  const resolve = await props.consumer({
+    map,
+    bundleContent,
+    bundlePosition,
+    entryContent,
+    env,
+    entryAst
+  })
 
   if (isCancelled(props.token)) return
 

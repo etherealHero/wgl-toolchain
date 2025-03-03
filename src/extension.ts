@@ -1,10 +1,10 @@
 import * as path from 'path'
 import * as vscode from 'vscode'
 import * as compilerUtils from './compiler/utils'
-import { intellisense } from './intellisense/features'
 import * as utils from './utils'
 
-import { bundleInfoRepository } from './intellisense/utils'
+import { intellisense } from './intellisense/features'
+import { VTSEnvStorage, bundleInfoRepository } from './intellisense/utils'
 import type * as wgl from './intellisense/wglscript'
 
 let diagnosticsCollection: vscode.DiagnosticCollection
@@ -33,7 +33,11 @@ export function activate(context: vscode.ExtensionContext) {
       () => compilerUtils.attachGlobalScript('plug.js', { projectRoot, modules: [] }, [])
     )
 
-    if (vscode.window.activeTextEditor?.document) {
+    const diagnosticsStrategy = utils.getExtOption<'onchange' | 'onsave' | 'disabled'>(
+      'intellisense.requestStrategy.diagnostics'
+    )
+
+    if (vscode.window.activeTextEditor?.document && diagnosticsStrategy !== 'disabled') {
       const activeDoc = vscode.window.activeTextEditor?.document
       const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
 
@@ -49,8 +53,11 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor(async e => {
-        if (!e) return
-        if (!vscode.window.activeTextEditor) return
+        const diagnosticsStrategy = utils.getExtOption<'onchange' | 'onsave' | 'disabled'>(
+          'intellisense.requestStrategy.diagnostics'
+        )
+
+        if (!e || !vscode.window.activeTextEditor || diagnosticsStrategy === 'disabled') return
 
         const activeDoc = vscode.window.activeTextEditor.document
         if (activeDoc.languageId !== 'javascript') return
@@ -76,22 +83,63 @@ export function activate(context: vscode.ExtensionContext) {
     )
 
     context.subscriptions.push(
-      vscode.workspace.onDidChangeTextDocument(async e => {
+      vscode.workspace.onDidSaveTextDocument(e => {
+        const diagnosticsStrategy = utils.getExtOption<'onchange' | 'onsave' | 'disabled'>(
+          'intellisense.requestStrategy.diagnostics'
+        )
+
+        if (vscode.window.activeTextEditor && diagnosticsStrategy === 'onsave') {
+          const activeDoc = vscode.window.activeTextEditor.document
+          if (e.fileName === activeDoc.fileName) {
+            const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
+
+            if (wsPath) {
+              if (vscode.window.activeTextEditor?.document.version !== e.version) return
+
+              debaunceChangeTextDocument(lastEdit).then(
+                passed =>
+                  passed &&
+                  intellisense
+                    .getDiagnostics({ fileName: activeDoc.fileName }, wsPath)
+                    .then(diagnostics => {
+                      if (!diagnostics) return
+
+                      diagnosticsCollection.clear()
+                      for (const [m, d] of diagnostics)
+                        diagnosticsCollection.set(vscode.Uri.file(path.join(wsPath, m)), d)
+                    })
+              )
+            }
+          }
+        }
+      })
+    )
+
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeTextDocument(e => {
         if (e.document.languageId !== 'javascript') return
-        if (!e.document.isDirty) return // TODO: проверить когда гит откатывается проходит ли триггер
+        if (!e.document.isDirty) return
 
         lastEdit = new Date()
 
         const normalized = compilerUtils.normalizePath(e.document.uri.fsPath, projectRoot)
 
-        // TODO: удалять tsvfs инстанс текущего бандла
-
         if (intellisense.modulesWithError.has(normalized)) {
           intellisense.modulesWithError.delete(normalized)
         }
 
-        for (const [entry, info] of bundleInfoRepository)
-          if (info.dependencies.find(d => d === normalized)) bundleInfoRepository.delete(entry)
+        for (const [entry, info] of bundleInfoRepository) {
+          if (info.dependencies.find(d => d === normalized)) {
+            bundleInfoRepository.delete(entry)
+            const hash = utils.getHash(info.bundleContent)
+            const env = VTSEnvStorage.get(hash)
+            if (env) {
+              env.sys.exit(0)
+              VTSEnvStorage.delete(hash)
+              console.log('DEBUG remove vts env')
+            }
+          }
+        }
 
         for (const [entry, deps] of intellisense.moduleReferencesStorage)
           if (deps.find(d => d === normalized)) intellisense.moduleReferencesStorage.delete(entry)
@@ -110,7 +158,11 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
 
-        if (vscode.window.activeTextEditor) {
+        const diagnosticsStrategy = utils.getExtOption<'onchange' | 'onsave' | 'disabled'>(
+          'intellisense.requestStrategy.diagnostics'
+        )
+
+        if (vscode.window.activeTextEditor && diagnosticsStrategy === 'onchange') {
           const activeDoc = vscode.window.activeTextEditor.document
           if (e.document.fileName === activeDoc.fileName) {
             const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
@@ -203,7 +255,8 @@ export function activate(context: vscode.ExtensionContext) {
           }
         },
         resolveCompletionItem: async (item, token) => {
-          if (!vscode.window.activeTextEditor) return
+          if (!vscode.window.activeTextEditor || vscode.window.activeTextEditor.document.isDirty)
+            return
 
           const document = vscode.window.activeTextEditor.document
           const position = vscode.window.activeTextEditor.selection.active
@@ -456,7 +509,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.languages.registerWorkspaceSymbolProvider({
-      provideWorkspaceSymbols: async (query, token) => {
+      provideWorkspaceSymbols: async (_query, token) => {
         const editor = vscode.window.activeTextEditor
         if (!editor) {
           // TODO: потом переделать под глобальные символы
@@ -518,6 +571,35 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         return null
+      }
+    })
+  )
+
+  context.subscriptions.push(
+    vscode.languages.registerFoldingRangeProvider(['javascript'], {
+      provideFoldingRanges: async (document, context, token) => {
+        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+        if (wsPath === undefined) {
+          utils.requestOpenWglScriptWorkspace()
+          return
+        }
+
+        try {
+          if (await debaunceChangeTextDocument(lastEdit)) {
+            return await intellisense.getFoldingRanges(
+              { fileName: document.fileName },
+              wsPath,
+              token
+            )
+          }
+        } catch (error) {
+          console.log(`ERROR: ${error}`)
+          compilerUtils.astStorage.clear()
+          compilerUtils.gls.code = ''
+          compilerUtils.gls.sourcemap = ''
+          compilerUtils.gls.modules = new Map()
+        }
       }
     })
   )
