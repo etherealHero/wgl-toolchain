@@ -150,7 +150,7 @@ test('format document', async () => {
   }
 
   await waitForSelectionChange({ timeoutInMilliseconds: 200 })
-  await vscode.commands.executeCommand('editor.action.formatDocument', 'etherealhero.wgl-toolchain')
+  await vscode.commands.executeCommand('editor.action.formatDocument')
   await waitForSelectionChange({ timeoutInMilliseconds: 200 })
 
   activeEditor = vscode.window.activeTextEditor
