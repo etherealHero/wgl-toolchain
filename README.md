@@ -17,4 +17,4 @@ This extension provides support for the WGLScript programming language.
 
 - disable builtin TypeScript extension for WGLScript workspace. Both services TypeScript & WGLScript can work improperly
 
-	![TypeScript builtin extension](https://raw.githubusercontent.com/etherealHero/wgl-toolchain/refs/heads/main/public/ts.jpg)
+	![TypeScript builtin extension](https://raw.githubusercontent.com/etherealHero/wgl-toolchain/refs/heads/main/public/ts.png)
