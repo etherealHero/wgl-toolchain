@@ -743,6 +743,10 @@ async function getDiagnostics(
     const allowedErrorCodes = libUtils.getExtOption<number[]>(
       'intellisense.diagnostics.allowedErrorCodes'
     )
+    const ignoreCodes = libUtils.getExtOption<number[]>(
+      'intellisense.diagnostics.ignoreCodes'
+    )
+
     const forConsumer: {
       code: number
       message: string
@@ -757,7 +761,8 @@ async function getDiagnostics(
         !d.start ||
         d.file.fileName !== utils.bundle ||
         !d.length ||
-        d.start < cUtils.gls.code.length /** location at global script */
+        d.start < cUtils.gls.code.length /** location at global script */ ||
+        ignoreCodes.includes(d.code)
       )
         continue
 
@@ -780,7 +785,8 @@ async function getDiagnostics(
         !d.start ||
         d.file.fileName !== utils.bundle ||
         !d.length ||
-        d.start < cUtils.gls.code.length /** location at global script */
+        d.start < cUtils.gls.code.length /** location at global script */ ||
+        ignoreCodes.includes(d.code)
       )
         continue
 

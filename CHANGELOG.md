@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.1.4
+
+- fix: disable update diagnostics on non JS files
+- add extension option "ignore ts codes"
+
 ## 0.1.3
 
 - README edits

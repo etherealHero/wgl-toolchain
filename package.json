@@ -2,7 +2,7 @@
   "name": "wgl-toolchain",
   "displayName": "WGLScript toolchain",
   "description": "WGLScript formatter, linter, intellisense for VS Code",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "publisher": "etherealhero",
   "repository": "https://github.com/etherealHero/wgl-toolchain",
   "keywords": ["wglscript", "formatter", "linter", "intellisense"],
@@ -35,6 +35,12 @@
           "scope": "resource",
           "default": [7006],
           "markdownDescription": "Cast _error_ diagnostics as _warning_ diagnostics by list of [TypeScript Error Codes](https://typescript.tv/errors/). You can enter the code to know it, hover on the diagnostic in the document and in the pop-up prompt copy the code"
+        },
+        "wglscript.intellisense.diagnostics.ignoreCodes": {
+          "type": "array",
+          "scope": "resource",
+          "default": [],
+          "markdownDescription": "Ignore diagnostics codes by list of [TypeScript Error Codes](https://typescript.tv/errors/). You can enter the code to know it, hover on the diagnostic in the document and in the pop-up prompt copy the code"
         },
         "wglscript.intellisense.requestDepthStrategy.localSymbols": {
           "type": "string",

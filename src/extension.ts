@@ -84,6 +84,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(
       vscode.workspace.onDidSaveTextDocument(e => {
+        if (e.languageId !== 'javascript') return
+
         const diagnosticsStrategy = utils.getExtOption<'onchange' | 'onsave' | 'disabled'>(
           'intellisense.requestStrategy.diagnostics'
         )
