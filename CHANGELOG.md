@@ -1,5 +1,9 @@
 # Change Log
 
+## 0.1.3
+
+- README edits
+
 ## 0.1.2
 
 - diagnostics extension settings
