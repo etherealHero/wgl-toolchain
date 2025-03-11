@@ -85,6 +85,8 @@ function attachFsMap(projectRoot: string) {
     )
   }
 
+  // TODO: записывать либы только если есть типы wglscript.d.ts
+  // TODO: добавить опцию расширения по укаащнию d.ts проекта, выкидывать предупреждение для подтягивания пакетов `npm i`
   for (const lib of fsMap.keys()) {
     const dir = path.join(projectRoot, 'node_modules', '@types', 'wglscript', 'generated')
     const libFile = path.join(dir, lib)

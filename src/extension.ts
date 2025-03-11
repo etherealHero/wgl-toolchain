@@ -15,6 +15,7 @@ async function debaunceChangeTextDocument(signal: Date) {
   if (signal === lastEdit) return true
 }
 
+// TODO: активация только на WGLProject
 export function activate(context: vscode.ExtensionContext) {
   console.log('Extension "wgl-toolchain" is now active')
 
@@ -66,6 +67,7 @@ export function activate(context: vscode.ExtensionContext) {
         const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
         if (!wsPath) return
         await new Promise(r => setTimeout(r, 1000))
+        // TODO: мб теряется обновление диагностик при обновлении зависимотей
         if (vscode.window.activeTextEditor?.document.version !== e.document.version) return
 
         const diagnostics = await intellisense.getDiagnostics(
@@ -74,6 +76,7 @@ export function activate(context: vscode.ExtensionContext) {
         )
 
         if (!diagnostics) return
+        // TODO: мб теряется обновление диагностик при обновлении зависимотей
         if (vscode.window.activeTextEditor?.document.version !== e.document.version) return
 
         diagnosticsCollection.clear()
@@ -96,7 +99,8 @@ export function activate(context: vscode.ExtensionContext) {
             const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
 
             if (wsPath) {
-              if (vscode.window.activeTextEditor?.document.version !== e.version) return
+              // при обновлении зависимостей надо пересобирать диагностики
+              // if (vscode.window.activeTextEditor?.document.version !== e.version) return
 
               debaunceChangeTextDocument(lastEdit).then(
                 passed =>
@@ -120,6 +124,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.workspace.onDidChangeTextDocument(e => {
         if (e.document.languageId !== 'javascript') return
+        // TODO: зависимость может поменяться, документ чист, но требует обновления диагностик
         if (!e.document.isDirty) return
 
         lastEdit = new Date()
@@ -132,11 +137,13 @@ export function activate(context: vscode.ExtensionContext) {
 
         for (const [entry, info] of bundleInfoRepository) {
           if (info.dependencies.find(d => d === normalized)) {
-            bundleInfoRepository.delete(entry)
             const hash = utils.getHash(info.bundleContent)
+            if (info.env) info.env.sys.exit(0)
+            bundleInfoRepository.delete(entry)
             const env = VTSEnvStorage.get(hash)
             if (env) {
               env.sys.exit(0)
+              // TODO: всё равно остаются лишние экземпляры, закртыть этот интерфейс под бандлИнфо
               VTSEnvStorage.delete(hash)
               console.log('DEBUG remove vts env')
             }
@@ -192,46 +199,12 @@ export function activate(context: vscode.ExtensionContext) {
     )
   }
 
-  context.subscriptions.push(
-    vscode.languages.registerDefinitionProvider(['javascript'], {
-      provideDefinition: async (document, position, token) => {
-        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
-
-        if (wsPath === undefined) {
-          utils.requestOpenWglScriptWorkspace()
-          return
-        }
-
-        let di: wgl.SymbolEntry[] = []
-        try {
-          di = await intellisense.getDefinitionInfoAtPosition(
-            { fileName: document.fileName },
-            position,
-            wsPath,
-            token
-          )
-        } catch (error) {
-          console.log(`ERROR: ${error}`)
-          compilerUtils.astStorage.clear()
-          compilerUtils.gls.code = ''
-          compilerUtils.gls.sourcemap = ''
-          compilerUtils.gls.modules = new Map()
-          return
-        }
-
-        return di.map(d => ({
-          uri: vscode.Uri.file(path.join(wsPath, d.source)),
-          range: new vscode.Range(d.line, d.column, d.line, d.column + d.length)
-        }))
-      }
-    })
-  )
-
-  context.subscriptions.push(
-    vscode.languages.registerCompletionItemProvider(
-      ['javascript'],
-      {
-        provideCompletionItems: async (document, position, token) => {
+  if (
+    utils.getExtOption<'enabled' | 'disabled'>('intellisense.features.goToDefinition') === 'enabled'
+  ) {
+    context.subscriptions.push(
+      vscode.languages.registerDefinitionProvider(['javascript'], {
+        provideDefinition: async (document, position, token) => {
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
           if (wsPath === undefined) {
@@ -239,316 +212,382 @@ export function activate(context: vscode.ExtensionContext) {
             return
           }
 
+          let di: wgl.SymbolEntry[] = []
           try {
-            const completions = await intellisense.getCompletionsAtPosition(
+            di = await intellisense.getDefinitionInfoAtPosition(
               { fileName: document.fileName },
               position,
               wsPath,
               token
             )
-
-            return completions
           } catch (error) {
             console.log(`ERROR: ${error}`)
             compilerUtils.astStorage.clear()
             compilerUtils.gls.code = ''
             compilerUtils.gls.sourcemap = ''
             compilerUtils.gls.modules = new Map()
-          }
-        },
-        resolveCompletionItem: async (item, token) => {
-          if (!vscode.window.activeTextEditor || vscode.window.activeTextEditor.document.isDirty)
-            return
-
-          const document = vscode.window.activeTextEditor.document
-          const position = vscode.window.activeTextEditor.selection.active
-          const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
-
-          if (wsPath === undefined) {
-            utils.requestOpenWglScriptWorkspace()
             return
           }
 
-          try {
-            const completion = await intellisense.getCompletionEntryDetails(
-              { fileName: document.fileName },
-              position,
-              typeof item.label === 'string' ? item.label : item.label.label,
-              wsPath,
-              token
-            )
-
-            return completion
-          } catch (error) {
-            console.log(`ERROR: ${error}`)
-            compilerUtils.astStorage.clear()
-            compilerUtils.gls.code = ''
-            compilerUtils.gls.sourcemap = ''
-            compilerUtils.gls.modules = new Map()
-          }
-        }
-      },
-      '.'
-    )
-  )
-
-  context.subscriptions.push(
-    vscode.languages.registerHoverProvider(['javascript'], {
-      provideHover: async (document, position, token) => {
-        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
-
-        if (wsPath === undefined) {
-          utils.requestOpenWglScriptWorkspace()
-          return
-        }
-
-        try {
-          const quickInfo = await intellisense.getQuickInfoAtPosition(
-            { fileName: document.fileName },
-            position,
-            wsPath,
-            token
-          )
-
-          return { contents: quickInfo }
-        } catch (error) {
-          console.log(`ERROR: ${error}`)
-          compilerUtils.astStorage.clear()
-          compilerUtils.gls.code = ''
-          compilerUtils.gls.sourcemap = ''
-          compilerUtils.gls.modules = new Map()
-        }
-      }
-    })
-  )
-
-  context.subscriptions.push(
-    vscode.languages.registerSignatureHelpProvider(
-      ['javascript'],
-      {
-        provideSignatureHelp: async (document, position, token, _context) => {
-          const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
-
-          if (wsPath === undefined) {
-            utils.requestOpenWglScriptWorkspace()
-            return
-          }
-
-          try {
-            const signatureHelpItems = await intellisense.getSignatureHelpItems(
-              { fileName: document.fileName },
-              position,
-              wsPath,
-              token
-            )
-
-            return signatureHelpItems
-          } catch (error) {
-            console.log(`ERROR: ${error}`)
-            compilerUtils.astStorage.clear()
-            compilerUtils.gls.code = ''
-            compilerUtils.gls.sourcemap = ''
-            compilerUtils.gls.modules = new Map()
-          }
-        }
-      },
-      ',',
-      '('
-    )
-  )
-
-  context.subscriptions.push(
-    vscode.languages.registerReferenceProvider(['javascript'], {
-      provideReferences: async (document, position, context, token) => {
-        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
-
-        if (wsPath === undefined) {
-          utils.requestOpenWglScriptWorkspace()
-          return
-        }
-
-        const wordPos = document.getWordRangeAtPosition(position)
-        let word = ''
-        if (wordPos && wordPos.start.line === wordPos.end.line) {
-          word = document
-            .lineAt(wordPos.start.line)
-            .text.slice(wordPos.start.character, wordPos.end.character)
-        }
-
-        try {
-          const refs = await intellisense.getReferencesAtPositionInProject(
-            { fileName: document.fileName },
-            position,
-            wsPath,
-            token,
-            new RegExp(word, 'm')
-          )
-
-          return refs.map(d => ({
+          return di.map(d => ({
             uri: vscode.Uri.file(path.join(wsPath, d.source)),
             range: new vscode.Range(d.line, d.column, d.line, d.column + d.length)
           }))
-        } catch (error) {
-          console.log(`ERROR: ${error}`)
-          compilerUtils.astStorage.clear()
-          compilerUtils.gls.code = ''
-          compilerUtils.gls.sourcemap = ''
-          compilerUtils.gls.modules = new Map()
-          return
         }
-      }
-    })
-  )
+      })
+    )
+  }
 
-  context.subscriptions.push(
-    vscode.languages.registerRenameProvider(['javascript'], {
-      provideRenameEdits: async (document, position, newName, token) => {
-        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+  if (
+    utils.getExtOption<'enabled' | 'disabled'>('intellisense.features.getCompletions') === 'enabled'
+  ) {
+    context.subscriptions.push(
+      vscode.languages.registerCompletionItemProvider(
+        ['javascript'],
+        {
+          provideCompletionItems: async (document, position, token) => {
+            const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-        if (wsPath === undefined) {
-          utils.requestOpenWglScriptWorkspace()
-          return
-        }
+            if (wsPath === undefined) {
+              utils.requestOpenWglScriptWorkspace()
+              return
+            }
 
-        const wordPos = document.getWordRangeAtPosition(position)
-        let word = ''
-        if (wordPos && wordPos.start.line === wordPos.end.line) {
-          word = document
-            .lineAt(wordPos.start.line)
-            .text.slice(wordPos.start.character, wordPos.end.character)
-        }
+            try {
+              const completions = await intellisense.getCompletionsAtPosition(
+                { fileName: document.fileName },
+                position,
+                wsPath,
+                token
+              )
 
-        try {
-          const refs = await intellisense.getReferencesAtPositionInProject(
-            { fileName: document.fileName },
-            position,
-            wsPath,
-            token,
-            new RegExp(word, 'm')
-          )
+              return completions
+            } catch (error) {
+              console.log(`ERROR: ${error}`)
+              compilerUtils.astStorage.clear()
+              compilerUtils.gls.code = ''
+              compilerUtils.gls.sourcemap = ''
+              compilerUtils.gls.modules = new Map()
+            }
+          },
+          resolveCompletionItem: async (item, token) => {
+            if (!vscode.window.activeTextEditor || vscode.window.activeTextEditor.document.isDirty)
+              return
 
-          const wsEdit = new vscode.WorkspaceEdit()
+            const document = vscode.window.activeTextEditor.document
+            const position = vscode.window.activeTextEditor.selection.active
+            const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-          refs.map(d =>
-            wsEdit.replace(
-              vscode.Uri.file(path.join(wsPath, d.source)),
-              new vscode.Range(d.line, d.column, d.line, d.column + d.length),
-              newName
-            )
-          )
+            if (wsPath === undefined) {
+              utils.requestOpenWglScriptWorkspace()
+              return
+            }
 
-          return wsEdit
-        } catch (error) {
-          console.log(`ERROR: ${error}`)
-          compilerUtils.astStorage.clear()
-          compilerUtils.gls.code = ''
-          compilerUtils.gls.sourcemap = ''
-          compilerUtils.gls.modules = new Map()
-          return
-        }
-      },
-      prepareRename: async (document, position, token) => {
-        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+            try {
+              const completion = await intellisense.getCompletionEntryDetails(
+                { fileName: document.fileName },
+                position,
+                typeof item.label === 'string' ? item.label : item.label.label,
+                wsPath,
+                token
+              )
 
-        if (wsPath === undefined) {
-          utils.requestOpenWglScriptWorkspace()
-          return
-        }
+              return completion
+            } catch (error) {
+              console.log(`ERROR: ${error}`)
+              compilerUtils.astStorage.clear()
+              compilerUtils.gls.code = ''
+              compilerUtils.gls.sourcemap = ''
+              compilerUtils.gls.modules = new Map()
+            }
+          }
+        },
+        '.'
+      )
+    )
+  }
 
-        let di: wgl.SymbolEntry[] = []
-        try {
-          di = await intellisense.getDefinitionInfoAtPosition(
-            { fileName: document.fileName },
-            position,
-            wsPath,
-            token
-          )
-        } catch (error) {
-          console.log(`ERROR: ${error}`)
-          compilerUtils.astStorage.clear()
-          compilerUtils.gls.code = ''
-          compilerUtils.gls.sourcemap = ''
-          compilerUtils.gls.modules = new Map()
-        }
+  if (utils.getExtOption<'enabled' | 'disabled'>('intellisense.features.getHover') === 'enabled') {
+    context.subscriptions.push(
+      vscode.languages.registerHoverProvider(['javascript'], {
+        provideHover: async (document, position, token) => {
+          const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-        if (di.find(d => d.source.match('node_modules\\\\@types'))) {
-          return new Promise((_, r) =>
-            r('You cannot rename elements that are defined in the standart library')
-          )
-        }
-      }
-    })
-  )
+          if (wsPath === undefined) {
+            utils.requestOpenWglScriptWorkspace()
+            return
+          }
 
-  context.subscriptions.push(
-    vscode.languages.registerDocumentSymbolProvider(['javascript'], {
-      provideDocumentSymbols: async (document, token) => {
-        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
-
-        if (wsPath === undefined) {
-          utils.requestOpenWglScriptWorkspace()
-          return
-        }
-
-        try {
-          if (await debaunceChangeTextDocument(lastEdit)) {
-            return await intellisense.getNavigationBarItems(
+          try {
+            const quickInfo = await intellisense.getQuickInfoAtPosition(
               { fileName: document.fileName },
+              position,
               wsPath,
               token
             )
+
+            return { contents: quickInfo }
+          } catch (error) {
+            console.log(`ERROR: ${error}`)
+            compilerUtils.astStorage.clear()
+            compilerUtils.gls.code = ''
+            compilerUtils.gls.sourcemap = ''
+            compilerUtils.gls.modules = new Map()
           }
-        } catch (error) {
-          console.log(`ERROR: ${error}`)
-          compilerUtils.astStorage.clear()
-          compilerUtils.gls.code = ''
-          compilerUtils.gls.sourcemap = ''
-          compilerUtils.gls.modules = new Map()
         }
-      }
-    })
-  )
+      })
+    )
+  }
 
-  context.subscriptions.push(
-    vscode.languages.registerWorkspaceSymbolProvider({
-      provideWorkspaceSymbols: async (_query, token) => {
-        const editor = vscode.window.activeTextEditor
-        if (!editor) {
-          // TODO: потом переделать под глобальные символы
-          return [
-            new vscode.SymbolInformation(
-              'You need to open any WGLScript file to resolve workspace symbols',
-              vscode.SymbolKind.File,
-              '',
-              new vscode.Location(vscode.Uri.file(''), new vscode.Range(0, 0, 0, 0))
+  if (
+    utils.getExtOption<'enabled' | 'disabled'>('intellisense.features.getSignatureHelp') ===
+    'enabled'
+  ) {
+    context.subscriptions.push(
+      vscode.languages.registerSignatureHelpProvider(
+        ['javascript'],
+        {
+          provideSignatureHelp: async (document, position, token, _context) => {
+            const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+            if (wsPath === undefined) {
+              utils.requestOpenWglScriptWorkspace()
+              return
+            }
+
+            try {
+              const signatureHelpItems = await intellisense.getSignatureHelpItems(
+                { fileName: document.fileName },
+                position,
+                wsPath,
+                token
+              )
+
+              return signatureHelpItems
+            } catch (error) {
+              console.log(`ERROR: ${error}`)
+              compilerUtils.astStorage.clear()
+              compilerUtils.gls.code = ''
+              compilerUtils.gls.sourcemap = ''
+              compilerUtils.gls.modules = new Map()
+            }
+          }
+        },
+        ',',
+        '('
+      )
+    )
+  }
+
+  if (
+    utils.getExtOption<'enabled' | 'disabled'>('intellisense.features.getReferences') === 'enabled'
+  ) {
+    context.subscriptions.push(
+      vscode.languages.registerReferenceProvider(['javascript'], {
+        provideReferences: async (document, position, context, token) => {
+          const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+          if (wsPath === undefined) {
+            utils.requestOpenWglScriptWorkspace()
+            return
+          }
+
+          const wordPos = document.getWordRangeAtPosition(position)
+          let word = ''
+          if (wordPos && wordPos.start.line === wordPos.end.line) {
+            word = document
+              .lineAt(wordPos.start.line)
+              .text.slice(wordPos.start.character, wordPos.end.character)
+          }
+
+          try {
+            const refs = await intellisense.getReferencesAtPositionInProject(
+              { fileName: document.fileName },
+              position,
+              wsPath,
+              token,
+              new RegExp(word, 'm')
             )
-          ]
-        }
 
-        const wsPath = vscode.workspace.getWorkspaceFolder(editor.document.uri)?.uri.fsPath
-
-        if (wsPath === undefined) {
-          utils.requestOpenWglScriptWorkspace()
-          return
+            return refs.map(d => ({
+              uri: vscode.Uri.file(path.join(wsPath, d.source)),
+              range: new vscode.Range(d.line, d.column, d.line, d.column + d.length)
+            }))
+          } catch (error) {
+            console.log(`ERROR: ${error}`)
+            compilerUtils.astStorage.clear()
+            compilerUtils.gls.code = ''
+            compilerUtils.gls.sourcemap = ''
+            compilerUtils.gls.modules = new Map()
+            return
+          }
         }
+      })
+    )
+  }
 
-        try {
-          return await intellisense.getNavigationBarItems(
-            { fileName: editor.document.fileName },
-            wsPath,
-            token,
-            true /** includeWorkspaceSymbols */
-          )
-        } catch (error) {
-          console.log(`ERROR: ${error}`)
-          compilerUtils.astStorage.clear()
-          compilerUtils.gls.code = ''
-          compilerUtils.gls.sourcemap = ''
-          compilerUtils.gls.modules = new Map()
+  if (
+    utils.getExtOption<'enabled' | 'disabled'>('intellisense.features.renameSymbol') === 'enabled'
+  ) {
+    context.subscriptions.push(
+      vscode.languages.registerRenameProvider(['javascript'], {
+        provideRenameEdits: async (document, position, newName, token) => {
+          const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+          if (wsPath === undefined) {
+            utils.requestOpenWglScriptWorkspace()
+            return
+          }
+
+          const wordPos = document.getWordRangeAtPosition(position)
+          let word = ''
+          if (wordPos && wordPos.start.line === wordPos.end.line) {
+            word = document
+              .lineAt(wordPos.start.line)
+              .text.slice(wordPos.start.character, wordPos.end.character)
+          }
+
+          try {
+            const refs = await intellisense.getReferencesAtPositionInProject(
+              { fileName: document.fileName },
+              position,
+              wsPath,
+              token,
+              new RegExp(word, 'm')
+            )
+
+            const wsEdit = new vscode.WorkspaceEdit()
+
+            refs.map(d =>
+              wsEdit.replace(
+                vscode.Uri.file(path.join(wsPath, d.source)),
+                new vscode.Range(d.line, d.column, d.line, d.column + d.length),
+                newName
+              )
+            )
+
+            return wsEdit
+          } catch (error) {
+            console.log(`ERROR: ${error}`)
+            compilerUtils.astStorage.clear()
+            compilerUtils.gls.code = ''
+            compilerUtils.gls.sourcemap = ''
+            compilerUtils.gls.modules = new Map()
+            return
+          }
+        },
+        prepareRename: async (document, position, token) => {
+          const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+          if (wsPath === undefined) {
+            utils.requestOpenWglScriptWorkspace()
+            return
+          }
+
+          let di: wgl.SymbolEntry[] = []
+          try {
+            di = await intellisense.getDefinitionInfoAtPosition(
+              { fileName: document.fileName },
+              position,
+              wsPath,
+              token
+            )
+          } catch (error) {
+            console.log(`ERROR: ${error}`)
+            compilerUtils.astStorage.clear()
+            compilerUtils.gls.code = ''
+            compilerUtils.gls.sourcemap = ''
+            compilerUtils.gls.modules = new Map()
+          }
+
+          if (di.find(d => d.source.match('node_modules\\\\@types'))) {
+            return new Promise((_, r) =>
+              r('You cannot rename elements that are defined in the standart library')
+            )
+          }
         }
-      }
-    })
-  )
+      })
+    )
+  }
+
+  if (
+    utils.getExtOption<'enabled' | 'disabled'>('intellisense.features.goToSymbol') === 'enabled'
+  ) {
+    context.subscriptions.push(
+      vscode.languages.registerDocumentSymbolProvider(['javascript'], {
+        provideDocumentSymbols: async (document, token) => {
+          const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+          if (wsPath === undefined) {
+            utils.requestOpenWglScriptWorkspace()
+            return
+          }
+
+          try {
+            if (await debaunceChangeTextDocument(lastEdit)) {
+              return await intellisense.getNavigationBarItems(
+                { fileName: document.fileName },
+                wsPath,
+                token
+              )
+            }
+          } catch (error) {
+            console.log(`ERROR: ${error}`)
+            compilerUtils.astStorage.clear()
+            compilerUtils.gls.code = ''
+            compilerUtils.gls.sourcemap = ''
+            compilerUtils.gls.modules = new Map()
+          }
+        }
+      })
+    )
+  }
+
+  if (
+    utils.getExtOption<'enabled' | 'disabled'>('intellisense.features.goToSymbolWorkspace') ===
+    'enabled'
+  ) {
+    context.subscriptions.push(
+      vscode.languages.registerWorkspaceSymbolProvider({
+        provideWorkspaceSymbols: async (_query, token) => {
+          const editor = vscode.window.activeTextEditor
+          if (!editor) {
+            // TODO: потом переделать под глобальные символы
+            return [
+              new vscode.SymbolInformation(
+                'You need to open any WGLScript file to resolve workspace symbols',
+                vscode.SymbolKind.File,
+                '',
+                new vscode.Location(vscode.Uri.file(''), new vscode.Range(0, 0, 0, 0))
+              )
+            ]
+          }
+
+          const wsPath = vscode.workspace.getWorkspaceFolder(editor.document.uri)?.uri.fsPath
+
+          if (wsPath === undefined) {
+            utils.requestOpenWglScriptWorkspace()
+            return
+          }
+
+          try {
+            return await intellisense.getNavigationBarItems(
+              { fileName: editor.document.fileName },
+              wsPath,
+              token,
+              true /** includeWorkspaceSymbols */
+            )
+          } catch (error) {
+            console.log(`ERROR: ${error}`)
+            compilerUtils.astStorage.clear()
+            compilerUtils.gls.code = ''
+            compilerUtils.gls.sourcemap = ''
+            compilerUtils.gls.modules = new Map()
+          }
+        }
+      })
+    )
+  }
 
   context.subscriptions.push(
     vscode.languages.registerDocumentFormattingEditProvider('javascript', {
@@ -577,34 +616,36 @@ export function activate(context: vscode.ExtensionContext) {
     })
   )
 
-  context.subscriptions.push(
-    vscode.languages.registerFoldingRangeProvider(['javascript'], {
-      provideFoldingRanges: async (document, context, token) => {
-        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+  if (utils.getExtOption<'enabled' | 'disabled'>('intellisense.features.folding') === 'enabled') {
+    context.subscriptions.push(
+      vscode.languages.registerFoldingRangeProvider(['javascript'], {
+        provideFoldingRanges: async (document, context, token) => {
+          const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-        if (wsPath === undefined) {
-          utils.requestOpenWglScriptWorkspace()
-          return
-        }
-
-        try {
-          if (await debaunceChangeTextDocument(lastEdit)) {
-            return await intellisense.getFoldingRanges(
-              { fileName: document.fileName },
-              wsPath,
-              token
-            )
+          if (wsPath === undefined) {
+            utils.requestOpenWglScriptWorkspace()
+            return
           }
-        } catch (error) {
-          console.log(`ERROR: ${error}`)
-          compilerUtils.astStorage.clear()
-          compilerUtils.gls.code = ''
-          compilerUtils.gls.sourcemap = ''
-          compilerUtils.gls.modules = new Map()
+
+          try {
+            if (await debaunceChangeTextDocument(lastEdit)) {
+              return await intellisense.getFoldingRanges(
+                { fileName: document.fileName },
+                wsPath,
+                token
+              )
+            }
+          } catch (error) {
+            console.log(`ERROR: ${error}`)
+            compilerUtils.astStorage.clear()
+            compilerUtils.gls.code = ''
+            compilerUtils.gls.sourcemap = ''
+            compilerUtils.gls.modules = new Map()
+          }
         }
-      }
-    })
-  )
+      })
+    )
+  }
 
   diagnosticsCollection = vscode.languages.createDiagnosticCollection('wglscript')
   context.subscriptions.push(diagnosticsCollection)

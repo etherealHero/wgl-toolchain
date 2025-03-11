@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.1.5
+
+- fix: update diagnostics on change dependencies
+- add extension options "intellisense features"
+
 ## 0.1.4
 
 - fix: disable update diagnostics on non JS files

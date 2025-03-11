@@ -743,9 +743,7 @@ async function getDiagnostics(
     const allowedErrorCodes = libUtils.getExtOption<number[]>(
       'intellisense.diagnostics.allowedErrorCodes'
     )
-    const ignoreCodes = libUtils.getExtOption<number[]>(
-      'intellisense.diagnostics.ignoreCodes'
-    )
+    const ignoreCodes = libUtils.getExtOption<number[]>('intellisense.diagnostics.ignoreCodes')
 
     const forConsumer: {
       code: number

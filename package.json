@@ -2,7 +2,7 @@
   "name": "wgl-toolchain",
   "displayName": "WGLScript toolchain",
   "description": "WGLScript formatter, linter, intellisense for VS Code",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "etherealhero",
   "repository": "https://github.com/etherealHero/wgl-toolchain",
   "keywords": ["wglscript", "formatter", "linter", "intellisense"],
@@ -85,6 +85,78 @@
           "enumItemLabels": ["On Change", "On Save", "Disabled"],
           "default": "onsave",
           "markdownDescription": "The request processing strategy for diagnostics in the Intelligent Service for active text document"
+        },
+        "wglscript.intellisense.features.goToDefinition": {
+          "type": "string",
+          "enum": ["enabled", "disabled"],
+          "markdownEnumDescriptions": ["Enable feature", "Disable feature"],
+          "enumItemLabels": ["Enable", "Disable"],
+          "default": "enabled",
+          "markdownDescription": "You can [jump to the definition](https://code.visualstudio.com/docs/editor/editingevolved#_go-to-definition) with `Ctrl+Click` or open the definition to the side with `Ctrl+Alt+Click`."
+        },
+        "wglscript.intellisense.features.getCompletions": {
+          "type": "string",
+          "enum": ["enabled", "disabled"],
+          "markdownEnumDescriptions": ["Enable feature", "Disable feature"],
+          "enumItemLabels": ["Enable", "Disable"],
+          "default": "enabled",
+          "markdownDescription": "You can [trigger IntelliSense completions items](https://code.visualstudio.com/docs/editor/intellisense?%252523038=#_intellisense-features) in any editor window by typing `Ctrl+Space` or by typing a trigger character (such as the dot character (`.`) in JavaScript)."
+        },
+        "wglscript.intellisense.features.getHover": {
+          "type": "string",
+          "enum": ["enabled", "disabled"],
+          "markdownEnumDescriptions": ["Enable feature", "Disable feature"],
+          "enumItemLabels": ["Enable", "Disable"],
+          "default": "enabled",
+          "markdownDescription": "[Hover over a JavaScript symbol](https://code.visualstudio.com/docs/languages/javascript#_hover-information) to quickly see its type information and relevant documentation. The `Ctrl+K Ctrl+I` keyboard shortcut shows this hover information at the current cursor position."
+        },
+        "wglscript.intellisense.features.getSignatureHelp": {
+          "type": "string",
+          "enum": ["enabled", "disabled"],
+          "markdownEnumDescriptions": ["Enable feature", "Disable feature"],
+          "enumItemLabels": ["Enable", "Disable"],
+          "default": "enabled",
+          "markdownDescription": "As you write JavaScript function calls, VS Code [shows information](https://code.visualstudio.com/docs/languages/javascript#_signature-help) about the function signature and highlights the parameter that you are currently completing. Signature help is shown automatically when you type a `(` or `,` within a function call. Press `Ctrl+Shift+Space` to manually trigger signature help."
+        },
+        "wglscript.intellisense.features.getReferences": {
+          "type": "string",
+          "enum": ["enabled", "disabled"],
+          "markdownEnumDescriptions": ["Enable feature", "Disable feature"],
+          "enumItemLabels": ["Enable", "Disable"],
+          "default": "enabled",
+          "markdownDescription": "We think there's nothing worse than a big context switch when all you want is to quickly check something. That's why we support peeked editors. When you execute a [Go to References](https://code.visualstudio.com/docs/editor/editingevolved#_peek) search (via `Shift+F12`)"
+        },
+        "wglscript.intellisense.features.renameSymbol": {
+          "type": "string",
+          "enum": ["enabled", "disabled"],
+          "markdownEnumDescriptions": ["Enable feature", "Disable feature"],
+          "enumItemLabels": ["Enable", "Disable"],
+          "default": "enabled",
+          "markdownDescription": "Press `F2` and then type the new desired name and press `Enter`. All usages of the symbol will be [renamed](https://code.visualstudio.com/docs/editor/editingevolved#_rename-symbol), across files."
+        },
+        "wglscript.intellisense.features.goToSymbol": {
+          "type": "string",
+          "enum": ["enabled", "disabled"],
+          "markdownEnumDescriptions": ["Enable feature", "Disable feature"],
+          "enumItemLabels": ["Enable", "Disable"],
+          "default": "enabled",
+          "markdownDescription": "You can [navigate symbols](https://code.visualstudio.com/docs/editor/editingevolved#_go-to-symbol) inside a file with `Ctrl+Shift+O`. By typing `:` the symbols will be grouped by category. Press `Up` or `Down` and navigate to the place you want."
+        },
+        "wglscript.intellisense.features.goToSymbolWorkspace": {
+          "type": "string",
+          "enum": ["enabled", "disabled"],
+          "markdownEnumDescriptions": ["Enable feature", "Disable feature"],
+          "enumItemLabels": ["Enable", "Disable"],
+          "default": "enabled",
+          "markdownDescription": "Support [jumping to a symbol](https://code.visualstudio.com/docs/editor/editingevolved#_open-symbol-by-name) across files with `Ctrl+T`. Type the first letter of a type you want to navigate to, regardless of which file contains it, and press `Enter`."
+        },
+        "wglscript.intellisense.features.folding": {
+          "type": "string",
+          "enum": ["enabled", "disabled"],
+          "markdownEnumDescriptions": ["Enable feature", "Disable feature"],
+          "enumItemLabels": ["Enable", "Disable"],
+          "default": "enabled",
+          "markdownDescription": "You can fold regions of source code using the folding icons on the gutter between line numbers and line start. Move the mouse over the gutter and click to fold and unfold regions. Use `Shift + Click` on the folding icon to fold or unfold the region and all regions inside."
         },
         "wglscript.intellisense.requestDepthStrategy.sliceModuleReferencesLength": {
           "type": "integer",
