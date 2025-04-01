@@ -41,7 +41,7 @@ function getVTSEnv(
 ): tsvfs.VirtualTypeScriptEnvironment {
   const hash = libUtils.getHash(bundleContent)
 
-  console.log(`DEBUG vtsEnvStorage size is ${VTSEnvStorage.size}`)
+  // console.log(`DEBUG vtsEnvStorage size is ${VTSEnvStorage.size}`)
 
   if (VTSEnvStorage.has(hash)) {
     return VTSEnvStorage.get(hash) as tsvfs.VirtualTypeScriptEnvironment
@@ -461,23 +461,23 @@ export function track<T extends object>(obj: T) {
     // biome-ignore lint/complexity/noBannedTypes: <explanation>
     // biome-ignore lint/suspicious/noExplicitAny: <explanation>
     apply(target: Function, thisArg: any, argumentsList: any[]) {
-      const methodName = target.name || 'anonymous function'
-      const start = performance.now()
+      // const methodName = target.name || 'anonymous function'
+      // const start = performance.now()
 
       const result = Reflect.apply(target, thisArg, argumentsList)
 
       if (result instanceof Promise) {
         return result.then(res => {
-          console.log(
-            `DEBUG execution time ${methodName} ${Math.round((performance.now() - start) * 100) / 100}ms`
-          )
+          // console.log(
+          //   `DEBUG execution time ${methodName} ${Math.round((performance.now() - start) * 100) / 100}ms`
+          // )
           return res
         })
       }
 
-      console.log(
-        `DEBUG execution time ${methodName} ${Math.round((performance.now() - start) * 100) / 100}ms`
-      )
+      // console.log(
+      //   `DEBUG execution time ${methodName} ${Math.round((performance.now() - start) * 100) / 100}ms`
+      // )
       return result
     }
   }
@@ -495,4 +495,17 @@ export function track<T extends object>(obj: T) {
       return originalProperty
     }
   })
+}
+
+export async function getGlobalDeps(projectRoot: string) {
+  const globalScript = path.join(projectRoot, libUtils.getExtOption<string>('globalScript.path'))
+
+  const globalDeps =
+    (await consumeScriptModule({
+      document: { fileName: globalScript },
+      projectRoot,
+      consumer: c => c.map.sources
+    })) || []
+
+  return globalDeps
 }

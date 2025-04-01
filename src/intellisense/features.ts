@@ -473,21 +473,17 @@ async function getReferencesAtPositionInProject(
 
   // 1 глобальный скрипт определен
   const globalScript = path.join(projectRoot, libUtils.getExtOption<string>('globalScript.path'))
-  const globalScriptN = cUtils.normalizePath(globalScript, projectRoot)
+  // const globalScriptN = cUtils.normalizePath(globalScript, projectRoot)
 
   if (!fs.existsSync(globalScript)) {
-    console.log(
-      `INFO: Global script module ${globalScriptN} not exists. Get references at position in project not available.`
-    )
+    // все эти консоли переписать на channel расширения
+    // console.log(
+    //   `INFO: Global script module ${globalScriptN} not exists. Get references at position in project not available.`
+    // )
     return definitions
   }
 
-  const globalDeps =
-    (await utils.consumeScriptModule({
-      document: { fileName: globalScript },
-      projectRoot,
-      consumer: c => c.map.sources
-    })) || []
+  const globalDeps = await utils.getGlobalDeps(projectRoot)
   const D = definitions[0]
   let modules: cUtils.TNormalizedPath[]
 
@@ -665,17 +661,7 @@ async function getModuleReferences(
         message: `${init ? 'Initialize features. ' : ''}Building ${state}/${scripts.length}`
       })
 
-      const globalScript = path.join(
-        projectRoot,
-        libUtils.getExtOption<string>('globalScript.path')
-      )
-      const globalDeps =
-        (await utils.consumeScriptModule({
-          document: { fileName: globalScript },
-          projectRoot,
-          consumer: c => c.map.sources
-        })) || []
-
+      const globalDeps = await utils.getGlobalDeps(projectRoot)
       const threads = libUtils.getExtOption<number>('intellisense.buildThreads')
 
       for (const chunk of utils.chunkedArray(scripts, threads)) {
@@ -837,6 +823,8 @@ async function getDiagnostics(
   return await utils.consumeScriptModule({ document, projectRoot, consumer })
 }
 
+// TODO: add support Octal literals
+// TODO: add option "save wglscript syntax" for #sql etc.
 async function getFormattingEditsForDocument(
   document: Pick<vscode.TextDocument, 'fileName'>,
   projectRoot: string,
@@ -915,6 +903,151 @@ async function getFoldingRanges(
   return await utils.consumeScriptModule({ document, projectRoot, consumer, token })
 }
 
+async function getLocalBundle(
+  document: Pick<vscode.TextDocument, 'fileName'>,
+  projectRoot: string,
+  position: vscode.Position
+): Promise<[string, sm.Position]> {
+  let bundlePosition: sm.Position = { line: 1, column: 0 }
+
+  const globalDeps = await utils.getGlobalDeps(projectRoot)
+
+  const localBundle = await compile(path.join(document.fileName), {
+    projectRoot,
+    modules: [...globalDeps],
+    skipAttachGlobalScript: true
+  })
+    .then(sn => sn.toStringWithSourceMap({ file: path.relative(projectRoot, document.fileName) }))
+    .then(async strWSM => {
+      const rawSourceMap = strWSM.map.toString()
+      const map = await new sm.SourceMapConsumer(rawSourceMap)
+      const pos = map.generatedPositionFor({
+        source: path.relative(projectRoot, document.fileName),
+        line: position.line + 1,
+        column: position.character
+      })
+
+      bundlePosition = { line: pos.line || 1, column: pos.column || 0 }
+
+      return strWSM.code
+    })
+
+  return [localBundle, bundlePosition]
+}
+
+async function getModuleInfo(
+  document: Pick<vscode.TextDocument, 'fileName'>,
+  projectRoot: string
+): Promise<vscode.ProviderResult<vscode.MarkdownString>> {
+  const info = new vscode.MarkdownString('')
+  const entry = cUtils.normalizePath(document.fileName, projectRoot)
+  const bundleInfo = utils.bundleInfoRepository.get(entry)
+
+  if (!bundleInfo) return
+
+  const globalDeps = await utils.getGlobalDeps(projectRoot)
+
+  type FileTree = { [key: string]: FileTree }
+  function buildFileTree(paths: string[]): FileTree {
+    const tree: FileTree = {}
+
+    paths.map(path => {
+      const parts = path.split('\\')
+      let current: FileTree = tree
+
+      parts.map(part => {
+        if (!current[part]) {
+          current[part] = {}
+        }
+        current = current[part]
+      })
+    })
+
+    return tree
+  }
+
+  /*
+    markdown += `${indent}${isLastItem ? '┗━━📂 ', '┣━━📂 '}${key}\n`
+      `${indent}${isLastItem ? '   ' : '┃  '}`,
+    markdown += `${indent}${isLastItem ? '┗━━🧾 ' : '┣━━🧾 '}${key}\t${fileLink}\n`
+  */
+
+  function generateMarkdown(tree: FileTree, indent: string, context: string): string {
+    let markdown = ''
+
+    const keys = Object.keys(tree).sort() // Сортируем ключи по алфавиту
+    const totalKeys = keys.length
+
+    keys.map((key, index) => {
+      const isDirectory = Object.keys(tree[key]).length > 0
+      const isLastItem = index === totalKeys - 1 // Проверяем, является ли текущий элемент последним
+
+      if (isDirectory) {
+        markdown += `${indent}${isLastItem ? '   - 📂 ' : '   - 📂 '}${key}\n`
+        markdown += generateMarkdown(
+          tree[key],
+          `${indent}${isLastItem ? '   ' : '   '}`,
+          `${context}${key}/`
+        )
+      } else {
+        const fileLink = `[](${context}${key})`
+        markdown += `${indent}${isLastItem ? '   - 🧾 ' : '   - 🧾 '}${key}\t${fileLink}\n`
+      }
+    })
+
+    return markdown
+  }
+
+  function prettifyMarkdownTree(md: string): string {
+    let maxLength = 0
+
+    md.split('\n').map(line => {
+      const parts = line.split('\t')
+      if (parts.length === 2 && maxLength < parts[0].length) maxLength = parts[0].length
+    })
+
+    maxLength++
+
+    return md
+      .split('\n')
+      .map(line => {
+        const parts = line.split('\t')
+        if (parts.length !== 2) return line
+
+        return parts[0] + ' '.repeat(maxLength - parts[0].length) + parts[1].trim()
+      })
+      .join('\n')
+  }
+
+  let fileTree: FileTree = {}
+
+  info.appendMarkdown('# Module info\n')
+  info.appendMarkdown('\n')
+  info.appendMarkdown('**Entry**\n')
+  info.appendMarkdown(`${entry}\n`)
+  info.appendMarkdown('\n')
+  info.appendMarkdown('## local dependencies \n')
+  info.appendMarkdown('\n')
+
+  fileTree = buildFileTree(
+    bundleInfo.map.sources.filter(d => !globalDeps.includes(d) && d !== entry)
+  )
+  info.appendMarkdown('- 📂 Project\n')
+  info.appendMarkdown(prettifyMarkdownTree(generateMarkdown(fileTree, '', '')))
+  info.appendMarkdown('\n')
+
+  info.appendMarkdown(
+    `## global dependencies (${libUtils.getExtOption<string>('globalScript.path')})\n`
+  )
+  info.appendMarkdown('\n')
+
+  fileTree = buildFileTree(bundleInfo.map.sources.filter(d => globalDeps.includes(d)))
+  info.appendMarkdown('- 📂 Project\n')
+  info.appendMarkdown(prettifyMarkdownTree(generateMarkdown(fileTree, '', '')))
+
+  return info
+}
+
 export const intellisense = utils.track({
   getDiagnostics,
   modulesWithError,
@@ -928,5 +1061,7 @@ export const intellisense = utils.track({
   getReferencesAtPosition,
   getNavigationBarItems,
   getFormattingEditsForDocument,
-  getFoldingRanges
+  getFoldingRanges,
+  getLocalBundle,
+  getModuleInfo
 })

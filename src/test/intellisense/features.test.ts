@@ -36,6 +36,9 @@ test('find definition of local Symbol', async () => {
 
   let activeEditor = vscode.window.activeTextEditor
 
+  // wait WGLScript Intellisense
+  await waitForSelectionChange({ timeoutInMilliseconds: 3000 })
+
   if (activeEditor) {
     const symbolPosition = new vscode.Position(2, 0)
     activeEditor.selection = new vscode.Selection(symbolPosition, symbolPosition)

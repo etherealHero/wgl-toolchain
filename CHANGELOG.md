@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.2.0
+
+- feat: inspect tools (bundle, local bundle, module info)
+- feat: status bar item for quick restart of service
+- fix: auto restart service by error handling
+- disable diagnostics by default
+- option enable/disable formatting
+- tests fixes
+
 ## 0.1.5
 
 - fix: update diagnostics on change dependencies

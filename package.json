@@ -2,7 +2,7 @@
   "name": "wgl-toolchain",
   "displayName": "WGLScript toolchain",
   "description": "WGLScript formatter, linter, intellisense for VS Code",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "publisher": "etherealhero",
   "repository": "https://github.com/etherealHero/wgl-toolchain",
   "keywords": ["wglscript", "formatter", "linter", "intellisense"],
@@ -83,7 +83,7 @@
             "Disable diagnostics"
           ],
           "enumItemLabels": ["On Change", "On Save", "Disabled"],
-          "default": "onsave",
+          "default": "disabled",
           "markdownDescription": "The request processing strategy for diagnostics in the Intelligent Service for active text document"
         },
         "wglscript.intellisense.features.goToDefinition": {
@@ -158,6 +158,14 @@
           "default": "enabled",
           "markdownDescription": "You can fold regions of source code using the folding icons on the gutter between line numbers and line start. Move the mouse over the gutter and click to fold and unfold regions. Use `Shift + Click` on the folding icon to fold or unfold the region and all regions inside."
         },
+        "wglscript.intellisense.features.formatter": {
+          "type": "string",
+          "enum": ["enabled", "disabled"],
+          "markdownEnumDescriptions": ["Enable feature", "Disable feature"],
+          "enumItemLabels": ["Enable", "Disable"],
+          "default": "enabled",
+          "markdownDescription": "Support for source code [formatting](https://code.visualstudio.com/docs/editor/codebasics#_formatting). Format Document (`Shift+Alt+F`) - Format the entire active file."
+        },
         "wglscript.intellisense.requestDepthStrategy.sliceModuleReferencesLength": {
           "type": "integer",
           "scope": "resource",
@@ -189,14 +197,32 @@
           "markdownDescription": "Global script module of wglscript project"
         }
       }
-    }
+    },
+    "commands": [
+      {
+        "command": "wglscript.restartService",
+        "title": "WGL Toolchain: Restart Service"
+      },
+      {
+        "command": "wglscript.showBundle",
+        "title": "WGL Toolchain: Show Bundle"
+      },
+      {
+        "command": "wglscript.showLocalBundle",
+        "title": "WGL Toolchain: Show Local Bundle"
+      },
+      {
+        "command": "wglscript.showModuleInfo",
+        "title": "WGL Toolchain: Show Module Info"
+      }
+    ]
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/mocha": "^10.0.1",
     "@types/node": "^20",
     "@types/vscode": "^1.73.0",
-    "@vscode/test-cli": "^0.0.8",
+    "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.3.9",
     "@vscode/vsce": "^3.2.2",
     "mocha": "^10.2.0",

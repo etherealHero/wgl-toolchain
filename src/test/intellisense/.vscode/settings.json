@@ -1,3 +1,26 @@
 {
-  "editor.defaultFormatter": "etherealhero.wgl-toolchain"
+  "editor.defaultFormatter": "etherealhero.wgl-toolchain",
+
+  "wglscript.globalScript.path": "Lib/AppGlobalScript.js",
+  "wglscript.intellisense.typescriptThreads": 20,
+  "wglscript.intellisense.buildThreads": 250,
+
+  "wglscript.intellisense.features.goToSymbolWorkspace": "enabled",
+  "wglscript.intellisense.features.getSignatureHelp": "disabled",
+  "wglscript.intellisense.features.getCompletions": "enabled",
+  "wglscript.intellisense.features.goToDefinition": "enabled",
+  "wglscript.intellisense.features.getReferences": "enabled",
+  "wglscript.intellisense.features.renameSymbol": "enabled",
+  "wglscript.intellisense.features.goToSymbol": "enabled",
+  "wglscript.intellisense.features.getHover": "enabled",
+  "wglscript.intellisense.features.folding": "enabled",
+
+  "wglscript.intellisense.requestDepthStrategy.globalSymbols": "bundle",
+  "wglscript.intellisense.requestDepthStrategy.librarySymbols": "bundle",
+  "wglscript.intellisense.requestDepthStrategy.localSymbols": "project",
+  "wglscript.intellisense.requestDepthStrategy.sliceModuleReferencesLength": 20,
+
+  "wglscript.intellisense.requestStrategy.diagnostics": "disabled",
+  "wglscript.intellisense.diagnostics.ignoreCodes": [],
+  "wglscript.intellisense.diagnostics.allowedErrorCodes": [7006]
 }

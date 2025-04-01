@@ -1,13 +1,13 @@
 import * as path from 'path'
 import * as vscode from 'vscode'
 import * as compilerUtils from './compiler/utils'
+import type * as wgl from './intellisense/wglscript'
 import * as utils from './utils'
 
 import { intellisense } from './intellisense/features'
 import { VTSEnvStorage, bundleInfoRepository } from './intellisense/utils'
-import type * as wgl from './intellisense/wglscript'
 
-let diagnosticsCollection: vscode.DiagnosticCollection
+export let diagnosticsCollection: vscode.DiagnosticCollection
 let lastEdit: Date = new Date()
 
 async function debaunceChangeTextDocument(signal: Date) {
@@ -23,16 +23,37 @@ export function activate(context: vscode.ExtensionContext) {
   if (wsf === undefined) {
     utils.requestOpenWglScriptWorkspace()
   } else {
-    const projectRoot = wsf[0].uri.fsPath
+    let command: vscode.Disposable
 
-    vscode.window.withProgress(
-      {
-        title: 'WGLToolchain: Initialize features',
-        location: vscode.ProgressLocation.Window,
-        cancellable: false
-      },
-      () => compilerUtils.attachGlobalScript('plug.js', { projectRoot, modules: [] }, [])
+    command = vscode.commands.registerCommand('wglscript.restartService', utils.restartService)
+    context.subscriptions.push(command)
+    command = vscode.commands.registerCommand('wglscript.showBundle', utils.showBundle)
+    context.subscriptions.push(command)
+    command = vscode.commands.registerCommand('wglscript.showLocalBundle', utils.showLocalBundle)
+    context.subscriptions.push(command)
+    command = vscode.commands.registerCommand('wglscript.showModuleInfo', utils.showModuleInfo)
+    context.subscriptions.push(command)
+
+    const statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 10)
+    statusBar.text = '$(sparkle) wgl'
+    statusBar.tooltip = new vscode.MarkdownString('', true)
+    statusBar.tooltip.isTrusted = true
+    statusBar.tooltip.appendMarkdown('WGL Toolchain')
+    statusBar.tooltip.appendMarkdown(
+      '\n\n[$(debug-restart) Restart Service](command:wglscript.restartService)'
     )
+    statusBar.tooltip.appendMarkdown('\n\nInspect tools:')
+    statusBar.tooltip.appendMarkdown('\n\n[$(symbol-enum) Bundle](command:wglscript.showBundle)')
+    statusBar.tooltip.appendMarkdown(
+      '\n\n[$(symbol-constant) Local Bundle](command:wglscript.showLocalBundle)'
+    )
+    statusBar.tooltip.appendMarkdown('\n\n[$(info) Module Info](command:wglscript.showModuleInfo)')
+    statusBar.command = 'wglscript.restartService'
+    statusBar.show()
+
+    context.subscriptions.push(statusBar)
+
+    utils.restartService()
 
     const diagnosticsStrategy = utils.getExtOption<'onchange' | 'onsave' | 'disabled'>(
       'intellisense.requestStrategy.diagnostics'
@@ -129,7 +150,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         lastEdit = new Date()
 
-        const normalized = compilerUtils.normalizePath(e.document.uri.fsPath, projectRoot)
+        const normalized = compilerUtils.normalizePath(e.document.uri.fsPath, wsf[0].uri.fsPath)
 
         if (intellisense.modulesWithError.has(normalized)) {
           intellisense.modulesWithError.delete(normalized)
@@ -145,7 +166,7 @@ export function activate(context: vscode.ExtensionContext) {
               env.sys.exit(0)
               // TODO: всё равно остаются лишние экземпляры, закртыть этот интерфейс под бандлИнфо
               VTSEnvStorage.delete(hash)
-              console.log('DEBUG remove vts env')
+              // console.log('DEBUG remove vts env')
             }
           }
         }
@@ -207,10 +228,7 @@ export function activate(context: vscode.ExtensionContext) {
         provideDefinition: async (document, position, token) => {
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-          if (wsPath === undefined) {
-            utils.requestOpenWglScriptWorkspace()
-            return
-          }
+          if (wsPath === undefined) return
 
           let di: wgl.SymbolEntry[] = []
           try {
@@ -222,10 +240,7 @@ export function activate(context: vscode.ExtensionContext) {
             )
           } catch (error) {
             console.log(`ERROR: ${error}`)
-            compilerUtils.astStorage.clear()
-            compilerUtils.gls.code = ''
-            compilerUtils.gls.sourcemap = ''
-            compilerUtils.gls.modules = new Map()
+            utils.restartService()
             return
           }
 
@@ -248,10 +263,7 @@ export function activate(context: vscode.ExtensionContext) {
           provideCompletionItems: async (document, position, token) => {
             const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-            if (wsPath === undefined) {
-              utils.requestOpenWglScriptWorkspace()
-              return
-            }
+            if (wsPath === undefined) return
 
             try {
               const completions = await intellisense.getCompletionsAtPosition(
@@ -264,10 +276,7 @@ export function activate(context: vscode.ExtensionContext) {
               return completions
             } catch (error) {
               console.log(`ERROR: ${error}`)
-              compilerUtils.astStorage.clear()
-              compilerUtils.gls.code = ''
-              compilerUtils.gls.sourcemap = ''
-              compilerUtils.gls.modules = new Map()
+              utils.restartService()
             }
           },
           resolveCompletionItem: async (item, token) => {
@@ -278,10 +287,7 @@ export function activate(context: vscode.ExtensionContext) {
             const position = vscode.window.activeTextEditor.selection.active
             const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-            if (wsPath === undefined) {
-              utils.requestOpenWglScriptWorkspace()
-              return
-            }
+            if (wsPath === undefined) return
 
             try {
               const completion = await intellisense.getCompletionEntryDetails(
@@ -295,10 +301,7 @@ export function activate(context: vscode.ExtensionContext) {
               return completion
             } catch (error) {
               console.log(`ERROR: ${error}`)
-              compilerUtils.astStorage.clear()
-              compilerUtils.gls.code = ''
-              compilerUtils.gls.sourcemap = ''
-              compilerUtils.gls.modules = new Map()
+              utils.restartService()
             }
           }
         },
@@ -313,10 +316,7 @@ export function activate(context: vscode.ExtensionContext) {
         provideHover: async (document, position, token) => {
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-          if (wsPath === undefined) {
-            utils.requestOpenWglScriptWorkspace()
-            return
-          }
+          if (wsPath === undefined) return
 
           try {
             const quickInfo = await intellisense.getQuickInfoAtPosition(
@@ -329,10 +329,7 @@ export function activate(context: vscode.ExtensionContext) {
             return { contents: quickInfo }
           } catch (error) {
             console.log(`ERROR: ${error}`)
-            compilerUtils.astStorage.clear()
-            compilerUtils.gls.code = ''
-            compilerUtils.gls.sourcemap = ''
-            compilerUtils.gls.modules = new Map()
+            utils.restartService()
           }
         }
       })
@@ -350,10 +347,7 @@ export function activate(context: vscode.ExtensionContext) {
           provideSignatureHelp: async (document, position, token, _context) => {
             const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-            if (wsPath === undefined) {
-              utils.requestOpenWglScriptWorkspace()
-              return
-            }
+            if (wsPath === undefined) return
 
             try {
               const signatureHelpItems = await intellisense.getSignatureHelpItems(
@@ -366,10 +360,7 @@ export function activate(context: vscode.ExtensionContext) {
               return signatureHelpItems
             } catch (error) {
               console.log(`ERROR: ${error}`)
-              compilerUtils.astStorage.clear()
-              compilerUtils.gls.code = ''
-              compilerUtils.gls.sourcemap = ''
-              compilerUtils.gls.modules = new Map()
+              utils.restartService()
             }
           }
         },
@@ -387,10 +378,7 @@ export function activate(context: vscode.ExtensionContext) {
         provideReferences: async (document, position, context, token) => {
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-          if (wsPath === undefined) {
-            utils.requestOpenWglScriptWorkspace()
-            return
-          }
+          if (wsPath === undefined) return
 
           const wordPos = document.getWordRangeAtPosition(position)
           let word = ''
@@ -415,10 +403,7 @@ export function activate(context: vscode.ExtensionContext) {
             }))
           } catch (error) {
             console.log(`ERROR: ${error}`)
-            compilerUtils.astStorage.clear()
-            compilerUtils.gls.code = ''
-            compilerUtils.gls.sourcemap = ''
-            compilerUtils.gls.modules = new Map()
+            utils.restartService()
             return
           }
         }
@@ -434,10 +419,7 @@ export function activate(context: vscode.ExtensionContext) {
         provideRenameEdits: async (document, position, newName, token) => {
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-          if (wsPath === undefined) {
-            utils.requestOpenWglScriptWorkspace()
-            return
-          }
+          if (wsPath === undefined) return
 
           const wordPos = document.getWordRangeAtPosition(position)
           let word = ''
@@ -469,20 +451,14 @@ export function activate(context: vscode.ExtensionContext) {
             return wsEdit
           } catch (error) {
             console.log(`ERROR: ${error}`)
-            compilerUtils.astStorage.clear()
-            compilerUtils.gls.code = ''
-            compilerUtils.gls.sourcemap = ''
-            compilerUtils.gls.modules = new Map()
+            utils.restartService()
             return
           }
         },
         prepareRename: async (document, position, token) => {
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-          if (wsPath === undefined) {
-            utils.requestOpenWglScriptWorkspace()
-            return
-          }
+          if (wsPath === undefined) return
 
           let di: wgl.SymbolEntry[] = []
           try {
@@ -494,10 +470,7 @@ export function activate(context: vscode.ExtensionContext) {
             )
           } catch (error) {
             console.log(`ERROR: ${error}`)
-            compilerUtils.astStorage.clear()
-            compilerUtils.gls.code = ''
-            compilerUtils.gls.sourcemap = ''
-            compilerUtils.gls.modules = new Map()
+            utils.restartService()
           }
 
           if (di.find(d => d.source.match('node_modules\\\\@types'))) {
@@ -518,10 +491,7 @@ export function activate(context: vscode.ExtensionContext) {
         provideDocumentSymbols: async (document, token) => {
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-          if (wsPath === undefined) {
-            utils.requestOpenWglScriptWorkspace()
-            return
-          }
+          if (wsPath === undefined) return
 
           try {
             if (await debaunceChangeTextDocument(lastEdit)) {
@@ -533,10 +503,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
           } catch (error) {
             console.log(`ERROR: ${error}`)
-            compilerUtils.astStorage.clear()
-            compilerUtils.gls.code = ''
-            compilerUtils.gls.sourcemap = ''
-            compilerUtils.gls.modules = new Map()
+            utils.restartService()
           }
         }
       })
@@ -565,10 +532,7 @@ export function activate(context: vscode.ExtensionContext) {
 
           const wsPath = vscode.workspace.getWorkspaceFolder(editor.document.uri)?.uri.fsPath
 
-          if (wsPath === undefined) {
-            utils.requestOpenWglScriptWorkspace()
-            return
-          }
+          if (wsPath === undefined) return
 
           try {
             return await intellisense.getNavigationBarItems(
@@ -579,42 +543,36 @@ export function activate(context: vscode.ExtensionContext) {
             )
           } catch (error) {
             console.log(`ERROR: ${error}`)
-            compilerUtils.astStorage.clear()
-            compilerUtils.gls.code = ''
-            compilerUtils.gls.sourcemap = ''
-            compilerUtils.gls.modules = new Map()
+            utils.restartService()
           }
         }
       })
     )
   }
 
-  context.subscriptions.push(
-    vscode.languages.registerDocumentFormattingEditProvider('javascript', {
-      provideDocumentFormattingEdits: async (document, options, token) => {
-        const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+  if (utils.getExtOption<'enabled' | 'disabled'>('intellisense.features.formatter') === 'enabled') {
+    context.subscriptions.push(
+      vscode.languages.registerDocumentFormattingEditProvider('javascript', {
+        provideDocumentFormattingEdits: async (document, options, token) => {
+          const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-        if (wsPath === undefined) {
-          utils.requestOpenWglScriptWorkspace()
-          return
+          if (wsPath === undefined) return
+
+          const endPos = document.positionAt(document.getText().length - 1)
+
+          try {
+            return await intellisense.getFormattingEditsForDocument(document, wsPath, endPos, token)
+          } catch (error) {
+            console.log(`ERROR: ${error}`)
+            vscode.window.showErrorMessage(`WGLFormatter ${error}`)
+            utils.restartService()
+          }
+
+          return null
         }
-
-        const endPos = document.positionAt(document.getText().length - 1)
-
-        try {
-          return await intellisense.getFormattingEditsForDocument(document, wsPath, endPos, token)
-        } catch (error) {
-          console.log(`ERROR: ${error}`)
-          compilerUtils.astStorage.clear()
-          compilerUtils.gls.code = ''
-          compilerUtils.gls.sourcemap = ''
-          compilerUtils.gls.modules = new Map()
-        }
-
-        return null
-      }
-    })
-  )
+      })
+    )
+  }
 
   if (utils.getExtOption<'enabled' | 'disabled'>('intellisense.features.folding') === 'enabled') {
     context.subscriptions.push(
@@ -622,10 +580,7 @@ export function activate(context: vscode.ExtensionContext) {
         provideFoldingRanges: async (document, context, token) => {
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
-          if (wsPath === undefined) {
-            utils.requestOpenWglScriptWorkspace()
-            return
-          }
+          if (wsPath === undefined) return
 
           try {
             if (await debaunceChangeTextDocument(lastEdit)) {
@@ -637,10 +592,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
           } catch (error) {
             console.log(`ERROR: ${error}`)
-            compilerUtils.astStorage.clear()
-            compilerUtils.gls.code = ''
-            compilerUtils.gls.sourcemap = ''
-            compilerUtils.gls.modules = new Map()
+            utils.restartService()
           }
         }
       })
