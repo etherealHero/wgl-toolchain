@@ -31,41 +31,6 @@ export const compilerOpts = {
   diagnostics: false
 }
 
-/** Map-key: bundle hash */
-export const VTSEnvStorage: Map<string, tsvfs.VirtualTypeScriptEnvironment> = new Map()
-
-function getVTSEnv(
-  projectRoot: string,
-  bundleContent: string,
-  cacheEnv: boolean
-): tsvfs.VirtualTypeScriptEnvironment {
-  const hash = libUtils.getHash(bundleContent)
-
-  // console.log(`DEBUG vtsEnvStorage size is ${VTSEnvStorage.size}`)
-
-  if (VTSEnvStorage.has(hash)) {
-    return VTSEnvStorage.get(hash) as tsvfs.VirtualTypeScriptEnvironment
-  }
-
-  const fsMap = attachFsMap(projectRoot)
-  fsMap.set(bundle, bundleContent)
-
-  const system = tsvfs.createSystem(fsMap)
-  // TODO: последний аргумент customTransformer изучить и прокинуть регистронезависимость для встроенных функций
-  // TODO: сохранять диагностику на CallExpressionAssignment
-  const env = libUtils.logtime(
-    tsvfs.createVirtualTypeScriptEnvironment,
-    system,
-    [bundle],
-    ts,
-    compilerOpts
-  )
-
-  if (cacheEnv) VTSEnvStorage.set(hash, env)
-
-  return env
-}
-
 let fsMap: Map<string, string> | undefined
 
 function attachFsMap(projectRoot: string) {
@@ -377,6 +342,7 @@ export async function consumeScriptModule<T>(
   let entryContent = ''
   let entryAst: AST<TNode> = []
   let map: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer | undefined
+  let env: tsvfs.VirtualTypeScriptEnvironment | undefined = undefined
 
   if (bundleInfoRepository.has(entry)) {
     const bundleInfo = bundleInfoRepository.get(entry) as IBundleInfo
@@ -385,6 +351,7 @@ export async function consumeScriptModule<T>(
     map = bundleInfo.map
     entryContent = bundleInfo.entryContent
     entryAst = bundleInfo.entryAst
+    env = bundleInfo.env
   } else {
     const sn = await compile(props.document.fileName, {
       projectRoot: props.projectRoot,
@@ -408,16 +375,35 @@ export async function consumeScriptModule<T>(
     entryContent = snEntry.toStringWithSourceMap({ file: entry }).code
     map = await new sm.SourceMapConsumer(rawSourceMap)
     entryAst = await cUtils.parseScriptModule(props.document.fileName, props.projectRoot)
+  }
 
-    if (isCancelled(props.token)) return
+  if (isCancelled(props.token)) return
 
-    bundleInfoRepository.set(entry, {
-      dependencies: map.sources,
-      bundleContent,
-      entryContent,
-      map,
-      entryAst
-    })
+  if (!env && props.getTypeScriptEnvironment) {
+    const fsMap = attachFsMap(props.projectRoot)
+    fsMap.set(bundle, bundleContent)
+
+    const system = tsvfs.createSystem(fsMap)
+    // TODO: последний аргумент customTransformer изучить и прокинуть регистронезависимость для встроенных функций
+    // TODO: сохранять диагностику на CallExpressionAssignment
+    env = libUtils.logtime(
+      tsvfs.createVirtualTypeScriptEnvironment,
+      system,
+      [bundle],
+      ts,
+      compilerOpts
+    )
+
+    if (props.cacheTypeScriptEnvironment) {
+      bundleInfoRepository.set(entry, {
+        dependencies: map.sources,
+        bundleContent,
+        entryContent,
+        entryAst,
+        map,
+        env
+      })
+    }
   }
 
   const bundlePosition = props.position
@@ -436,19 +422,13 @@ export async function consumeScriptModule<T>(
   )
     return
 
-  let env: tsvfs.VirtualTypeScriptEnvironment | undefined = undefined
-
-  if (props.getTypeScriptEnvironment) {
-    env = getVTSEnv(props.projectRoot, bundleContent, props.cacheTypeScriptEnvironment)
-  }
-
   const resolve = await props.consumer({
-    map,
-    bundleContent,
     bundlePosition,
+    bundleContent,
     entryContent,
-    env,
-    entryAst
+    entryAst,
+    map,
+    env
   })
 
   if (isCancelled(props.token)) return

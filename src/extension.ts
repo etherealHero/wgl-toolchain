@@ -1,19 +1,11 @@
 import * as path from 'path'
 import * as vscode from 'vscode'
-import * as compilerUtils from './compiler/utils'
 import type * as wgl from './intellisense/wglscript'
 import * as utils from './utils'
 
 import { intellisense } from './intellisense/features'
-import { VTSEnvStorage, bundleInfoRepository } from './intellisense/utils'
 
 export let diagnosticsCollection: vscode.DiagnosticCollection
-let lastEdit: Date = new Date()
-
-async function debaunceChangeTextDocument(signal: Date) {
-  await new Promise(r => setTimeout(r, 2000))
-  if (signal === lastEdit) return true
-}
 
 // TODO: активация только на WGLProject
 export function activate(context: vscode.ExtensionContext) {
@@ -41,6 +33,9 @@ export function activate(context: vscode.ExtensionContext) {
     statusBar.tooltip.appendMarkdown('WGL Toolchain')
     statusBar.tooltip.appendMarkdown(
       '\n\n[$(debug-restart) Restart Service](command:wglscript.restartService)'
+    )
+    statusBar.tooltip.appendMarkdown(
+      '\n\n[$(extensions) BuiltIn Extensions](command:workbench.extensions.action.listBuiltInExtensions)'
     )
     statusBar.tooltip.appendMarkdown('\n\nInspect tools:')
     statusBar.tooltip.appendMarkdown('\n\n[$(symbol-enum) Bundle](command:wglscript.showBundle)')
@@ -123,7 +118,7 @@ export function activate(context: vscode.ExtensionContext) {
               // при обновлении зависимостей надо пересобирать диагностики
               // if (vscode.window.activeTextEditor?.document.version !== e.version) return
 
-              debaunceChangeTextDocument(lastEdit).then(
+              utils.debaunceChangeTextDocument(utils.lastEdit).then(
                 passed =>
                   passed &&
                   intellisense
@@ -143,80 +138,9 @@ export function activate(context: vscode.ExtensionContext) {
     )
 
     context.subscriptions.push(
-      vscode.workspace.onDidChangeTextDocument(e => {
-        if (e.document.languageId !== 'javascript') return
-        // TODO: зависимость может поменяться, документ чист, но требует обновления диагностик
-        if (!e.document.isDirty) return
-
-        lastEdit = new Date()
-
-        const normalized = compilerUtils.normalizePath(e.document.uri.fsPath, wsf[0].uri.fsPath)
-
-        if (intellisense.modulesWithError.has(normalized)) {
-          intellisense.modulesWithError.delete(normalized)
-        }
-
-        for (const [entry, info] of bundleInfoRepository) {
-          if (info.dependencies.find(d => d === normalized)) {
-            const hash = utils.getHash(info.bundleContent)
-            if (info.env) info.env.sys.exit(0)
-            bundleInfoRepository.delete(entry)
-            const env = VTSEnvStorage.get(hash)
-            if (env) {
-              env.sys.exit(0)
-              // TODO: всё равно остаются лишние экземпляры, закртыть этот интерфейс под бандлИнфо
-              VTSEnvStorage.delete(hash)
-              // console.log('DEBUG remove vts env')
-            }
-          }
-        }
-
-        for (const [entry, deps] of intellisense.moduleReferencesStorage)
-          if (deps.find(d => d === normalized)) intellisense.moduleReferencesStorage.delete(entry)
-
-        if (compilerUtils.astStorage.has(normalized)) {
-          compilerUtils.astStorage.delete(normalized)
-        }
-
-        if (compilerUtils.gls.code !== '') {
-          if (
-            utils.mapToArray(compilerUtils.gls.modules).indexOf(normalized.toLowerCase()) !== -1
-          ) {
-            compilerUtils.gls.code = ''
-            compilerUtils.gls.sourcemap = ''
-            compilerUtils.gls.modules = new Map()
-          }
-        }
-
-        const diagnosticsStrategy = utils.getExtOption<'onchange' | 'onsave' | 'disabled'>(
-          'intellisense.requestStrategy.diagnostics'
-        )
-
-        if (vscode.window.activeTextEditor && diagnosticsStrategy === 'onchange') {
-          const activeDoc = vscode.window.activeTextEditor.document
-          if (e.document.fileName === activeDoc.fileName) {
-            const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
-
-            if (wsPath) {
-              if (vscode.window.activeTextEditor?.document.version !== e.document.version) return
-
-              debaunceChangeTextDocument(lastEdit).then(
-                passed =>
-                  passed &&
-                  intellisense
-                    .getDiagnostics({ fileName: activeDoc.fileName }, wsPath)
-                    .then(diagnostics => {
-                      if (!diagnostics) return
-
-                      diagnosticsCollection.clear()
-                      for (const [m, d] of diagnostics)
-                        diagnosticsCollection.set(vscode.Uri.file(path.join(wsPath, m)), d)
-                    })
-              )
-            }
-          }
-        }
-      })
+      vscode.workspace.onDidChangeTextDocument(e =>
+        utils.didChangeTextDocumentHandler({ document: e.document })
+      )
     )
   }
 
@@ -439,13 +363,31 @@ export function activate(context: vscode.ExtensionContext) {
             )
 
             const wsEdit = new vscode.WorkspaceEdit()
+            const docsSync: Pick<
+              vscode.TextDocument,
+              'isDirty' | 'uri' | 'fileName' | 'version' | 'languageId'
+            >[] = []
 
-            refs.map(d =>
+            refs.map(d => {
+              const uri = vscode.Uri.file(path.join(wsPath, d.source))
+
+              docsSync.push({
+                isDirty: true,
+                uri,
+                fileName: uri.fsPath,
+                version: 0,
+                languageId: 'javascript'
+              })
+
               wsEdit.replace(
-                vscode.Uri.file(path.join(wsPath, d.source)),
+                uri,
                 new vscode.Range(d.line, d.column, d.line, d.column + d.length),
                 newName
               )
+            })
+
+            new Promise(r => setTimeout(r, 0)).then(() =>
+              docsSync.map(d => utils.didChangeTextDocumentHandler({ document: d, force: true }))
             )
 
             return wsEdit
@@ -494,7 +436,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (wsPath === undefined) return
 
           try {
-            if (await debaunceChangeTextDocument(lastEdit)) {
+            if (await utils.debaunceChangeTextDocument(utils.lastEdit)) {
               return await intellisense.getNavigationBarItems(
                 { fileName: document.fileName },
                 wsPath,
@@ -583,7 +525,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (wsPath === undefined) return
 
           try {
-            if (await debaunceChangeTextDocument(lastEdit)) {
+            if (await utils.debaunceChangeTextDocument(utils.lastEdit)) {
               return await intellisense.getFoldingRanges(
                 { fileName: document.fileName },
                 wsPath,

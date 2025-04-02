@@ -70,6 +70,7 @@ interface GlobalScriptRaw {
   modules: Map<number, string>
 }
 
+// TODO: перевести на bundleInfoRepository
 /** Global script storage */
 export const gls: GlobalScriptRaw = { code: '', sourcemap: '', modules: new Map() }
 

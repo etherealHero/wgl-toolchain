@@ -1,3 +1,5 @@
+/** See {@link USER} */
+
 /**
  * Sum two numbers
  * @param {number} a first value

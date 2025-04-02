@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.2.1
+
+- fix: avoid first line of document intellisense features
+- fix: sync TypeScript Environment after workspace edits
+- fix: sync TypeScript Environment on document changes
+- add builtIn extensions short link in WGL tooltip
+
 ## 0.2.0
 
 - feat: inspect tools (bundle, local bundle, module info)

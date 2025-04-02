@@ -71,7 +71,10 @@ export async function compile(file: string, opt: utils.CompileOptions): Promise<
 
   const chunks: Array<string | sm.SourceNode> = []
   if (!opt.skipAttachGlobalScript) await utils.attachGlobalScript(file, opt, chunks)
-  if (ast.at(-1)?.type === 'breakLine') ast.pop() // remove EOF
+
+  // TODO: конкатенированный файл прицепляется в продолжение последней строки и character offset некоректный
+  // TODO: но теперь quickInfo - Hover ломается, скорее всего вовремя не обновляется контекст
+  // if (ast.at(-1)?.type === 'breakLine') ast.pop() // remove EOF
 
   for (const n of ast) {
     const { type, text } = n

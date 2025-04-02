@@ -12,10 +12,11 @@
   "wglscript.intellisense.features.getReferences": "enabled",
   "wglscript.intellisense.features.renameSymbol": "enabled",
   "wglscript.intellisense.features.goToSymbol": "enabled",
+  "wglscript.intellisense.features.formatter": "enabled",
   "wglscript.intellisense.features.getHover": "enabled",
   "wglscript.intellisense.features.folding": "enabled",
 
-  "wglscript.intellisense.requestDepthStrategy.globalSymbols": "bundle",
+  "wglscript.intellisense.requestDepthStrategy.globalSymbols": "project",
   "wglscript.intellisense.requestDepthStrategy.librarySymbols": "bundle",
   "wglscript.intellisense.requestDepthStrategy.localSymbols": "project",
   "wglscript.intellisense.requestDepthStrategy.sliceModuleReferencesLength": 20,

@@ -58,7 +58,7 @@ test('find definition of local Symbol', async () => {
 
   assert.deepEqual(
     activeEditor?.selection.active,
-    new vscode.Position(6, 9),
+    new vscode.Position(8, 9),
     'Selection of definition Symbol is valid'
   )
 })
@@ -159,8 +159,21 @@ test('format document', async () => {
   activeEditor = vscode.window.activeTextEditor
 
   assert.equal(
-    path.basename(activeEditor?.document.getText() || ''),
-    'alert("lorem");\n\n',
+    activeEditor?.document.getText() || '',
+    [
+      '// @ts-nocheck',
+      '// format feature by Prettier (config .prettierrc supported)',
+      '',
+      'alert("lorem");',
+      '',
+      '// support #regions',
+      'var getUser = `  suser_sname()',
+      '  `;',
+      '',
+      '// support call expression assignment',
+      'Params.Param(0) = "ipsum";',
+      ''
+    ].join('\n'),
     'Module file has been formatted'
   )
 })
