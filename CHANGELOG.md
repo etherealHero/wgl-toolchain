@@ -1,5 +1,9 @@
 # Change Log
 
+## 0.2.2
+
+- edit README, add previews
+
 ## 0.2.1
 
 - fix: avoid first line of document intellisense features
