@@ -1,10 +1,17 @@
-# WGLScript toolchain
+# 🛠 WGLScript toolchain
 
 This extension provides support for the WGLScript programming language.
 
-## Features
+## 📌 Features
 
 - [x] formatter
+	- [x] #regions
+	- [x] callExpressionAssignment
+	- [ ] octal literals
+- [x] inspect tools
+	- [x] show bundle
+	- [x] show local bundle
+	- [x] show module info
 - [x] intellisense
 	- [x] go to definition
 	- [x] completions
@@ -13,7 +20,17 @@ This extension provides support for the WGLScript programming language.
 	- [x] find references (in ScriptModule or Project)
 	- [x] diagnostics
 
-### Recommendation
+## 🚀 Examples
+
+- Inspect tools
+
+	![TypeScript builtin extension](https://raw.githubusercontent.com/etherealHero/wgl-toolchain/refs/heads/main/public/inspecttools.gif)
+
+- Intellisense
+
+	![TypeScript builtin extension](https://raw.githubusercontent.com/etherealHero/wgl-toolchain/refs/heads/main/public/intellisense.gif)
+
+### 📝 Recommendation
 
 - disable builtin TypeScript extension for WGLScript workspace. Both services TypeScript & WGLScript can work improperly
 
