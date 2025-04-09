@@ -135,8 +135,10 @@ test('find definition of library Symbol', async () => {
   )
 })
 
-test('format document', async () => {
-  const unformattedUri = vscode.Uri.file(path.join(__dirnameProxy, 'unformatted.js'))
+test('format document with wgl syntax', async () => {
+  const unformattedUri = vscode.Uri.file(
+    path.join(__dirnameProxy, 'formatting', 'wgl-syntax-compatibility.js')
+  )
 
   for (const d of vscode.workspace.textDocuments) {
     await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
@@ -164,16 +166,76 @@ test('format document', async () => {
       '// @ts-nocheck',
       '// format feature by Prettier (config .prettierrc supported)',
       '',
-      'alert("lorem");',
+      "alert('lorem');",
       '',
       '// support #regions',
       'var getUser = `  suser_sname()',
       '  `;',
       '',
       '// support call expression assignment',
-      'Params.Param(0) = "ipsum";',
+      "Params.Param(0) = 'ipsum';",
       ''
     ].join('\n'),
+    'Module file has been formatted'
+  )
+})
+
+test('format document with eof', async () => {
+  const unformattedUri = vscode.Uri.file(path.join(__dirnameProxy, 'formatting', 'eof.js'))
+
+  for (const d of vscode.workspace.textDocuments) {
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
+  }
+
+  const document = await vscode.workspace.openTextDocument(unformattedUri)
+  await vscode.window.showTextDocument(document)
+
+  let activeEditor = vscode.window.activeTextEditor
+
+  if (activeEditor) {
+    const symbolPosition = new vscode.Position(5, 10)
+    activeEditor.selection = new vscode.Selection(symbolPosition, symbolPosition)
+  }
+
+  await waitForSelectionChange({ timeoutInMilliseconds: 200 })
+  await vscode.commands.executeCommand('editor.action.formatDocument')
+  await waitForSelectionChange({ timeoutInMilliseconds: 200 })
+
+  activeEditor = vscode.window.activeTextEditor
+
+  assert.equal(
+    activeEditor?.document.getText() || '',
+    ["alert('lorem');", ''].join('\n'),
+    'Module file has been formatted'
+  )
+})
+
+test('format document with missing eof', async () => {
+  const unformattedUri = vscode.Uri.file(path.join(__dirnameProxy, 'formatting', 'missing-eof.js'))
+
+  for (const d of vscode.workspace.textDocuments) {
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
+  }
+
+  const document = await vscode.workspace.openTextDocument(unformattedUri)
+  await vscode.window.showTextDocument(document)
+
+  let activeEditor = vscode.window.activeTextEditor
+
+  if (activeEditor) {
+    const symbolPosition = new vscode.Position(5, 10)
+    activeEditor.selection = new vscode.Selection(symbolPosition, symbolPosition)
+  }
+
+  await waitForSelectionChange({ timeoutInMilliseconds: 200 })
+  await vscode.commands.executeCommand('editor.action.formatDocument')
+  await waitForSelectionChange({ timeoutInMilliseconds: 200 })
+
+  activeEditor = vscode.window.activeTextEditor
+
+  assert.equal(
+    activeEditor?.document.getText() || '',
+    ["alert('lorem');", ''].join('\n'),
     'Module file has been formatted'
   )
 })

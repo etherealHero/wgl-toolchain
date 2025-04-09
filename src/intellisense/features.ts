@@ -842,7 +842,7 @@ async function getFormattingEditsForDocument(
     return [
       {
         newText: await prettier.format(entryContent, config),
-        range: new vscode.Range(0, 0, endPos.line, endPos.character + 1)
+        range: new vscode.Range(0, 0, endPos.line + 1, endPos.character + 1)
       }
     ]
   }

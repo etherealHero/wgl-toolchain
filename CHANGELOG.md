@@ -1,5 +1,9 @@
 # Change Log
 
+## 0.2.3
+
+- fix double eof after format raw script file with existing eof
+
 ## 0.2.2
 
 - edit README, add previews
