@@ -4,13 +4,11 @@ import * as prettier from 'prettier'
 import * as sm from 'source-map'
 import * as ts from 'typescript'
 import * as vscode from 'vscode'
+import * as compiler from '../compiler/compiler'
 import * as cUtils from '../compiler/utils'
 import * as libUtils from '../utils'
 import * as utils from './utils'
-
 import type * as wgl from './wglscript'
-
-import { type ImportNode, compile } from '../compiler/compiler'
 
 async function getDefinitionInfoAtPosition(
   document: Pick<vscode.TextDocument, 'fileName'>,
@@ -26,9 +24,9 @@ async function getDefinitionInfoAtPosition(
     )
 
     if (moduleRef) {
-      const module = (moduleRef as ImportNode).href.startsWith('.')
-        ? path.join(`${path.dirname(document.fileName)}/${(moduleRef as ImportNode).href}`)
-        : path.join(`${projectRoot}/${(moduleRef as ImportNode).href}`)
+      const module = (moduleRef as compiler.ImportNode).href.startsWith('.')
+        ? path.join(`${path.dirname(document.fileName)}/${(moduleRef as compiler.ImportNode).href}`)
+        : path.join(`${projectRoot}/${(moduleRef as compiler.ImportNode).href}`)
       const moduleN = cUtils.normalizePath(module, projectRoot)
 
       return [
@@ -70,13 +68,26 @@ async function getDefinitionInfoAtPosition(
       const lnCh = ts.getLineAndCharacterOfPosition(sf, di.textSpan.start)
 
       if (di.fileName === utils.bundle) {
+        // символ находится в скрипт модуле
         forConsumer.push([di, lnCh])
         continue
       }
 
+      // символ находится в .d.ts
       const source = path.join('node_modules', '@types', 'wglscript', 'generated', di.fileName)
       const { line, character: column } = lnCh
-      sourceD.push({ source, line, column, length: di.textSpan.length })
+
+      if (
+        !sourceD.find(
+          sd =>
+            sd.source.toLowerCase() === source.toLowerCase() &&
+            sd.line === line &&
+            sd.column === column &&
+            sd.length === di.textSpan.length
+        )
+      ) {
+        sourceD.push({ source, line, column, length: di.textSpan.length })
+      }
     }
 
     forConsumer.map(record => {
@@ -89,7 +100,18 @@ async function getDefinitionInfoAtPosition(
       })
 
       if (source == null || orLn == null) return
-      sourceD.push({ source, line: orLn - 1, column: lnCh.character, length })
+
+      if (
+        !sourceD.find(
+          sd =>
+            sd.source.toLowerCase() === source.toLowerCase() &&
+            sd.line === orLn - 1 &&
+            sd.column === lnCh.character &&
+            sd.length === length
+        )
+      ) {
+        sourceD.push({ source, line: orLn - 1, column: lnCh.character, length })
+      }
     })
 
     if (token?.isCancellationRequested) return []
@@ -607,8 +629,6 @@ async function getModuleReferences(
   // TODO: здесь теряется хоистинг
   let scripts: Array<cUtils.TNormalizedPath> = await utils.getJsFiles(projectRoot, searchPattern)
 
-  scripts
-
   if (moduleReferencesStorage.size) {
     const traversedScripts: Array<cUtils.TNormalizedPath> = []
     for (const [_, deps] of moduleReferencesStorage) for (const d of deps) traversedScripts.push(d)
@@ -670,11 +690,12 @@ async function getModuleReferences(
           chunk.map(script =>
             utils.isCancelled([token, t])
               ? null
-              : compile(path.join(projectRoot, script), {
-                  projectRoot,
-                  modules: [...globalDeps],
-                  skipAttachGlobalScript: true
-                })
+              : compiler
+                  .compile(path.join(projectRoot, script), {
+                    projectRoot,
+                    modules: [...globalDeps],
+                    skipAttachGlobalScript: true
+                  })
                   .then(sn => sn.toStringWithSourceMap({ file: script }))
                   .then(strWSM => new sm.SourceMapConsumer(strWSM.map.toString()))
                   .then(map => {
@@ -826,7 +847,7 @@ async function getDiagnostics(
 // TODO: add support Octal literals
 // TODO: add option "save wglscript syntax" for #sql etc.
 async function getFormattingEditsForDocument(
-  document: Pick<vscode.TextDocument, 'fileName'>,
+  document: Pick<vscode.TextDocument, 'fileName' | 'getText'>,
   projectRoot: string,
   endPos: vscode.Position,
   token?: vscode.CancellationToken
@@ -839,12 +860,47 @@ async function getFormattingEditsForDocument(
 
     if (token?.isCancellationRequested) return
 
+    const newText = await prettier.format(entryContent, config)
+    const unformattedDocumentAST = cUtils.parse(document.getText())
+    const formattedDocumentAST = cUtils.parse(newText)
+    const sn = await compiler.saveLegacyAstNodes(unformattedDocumentAST, formattedDocumentAST)
+    const strWSM = sn.toStringWithSourceMap({ file: path.relative(projectRoot, document.fileName) })
+
     return [
       {
-        newText: await prettier.format(entryContent, config),
+        newText: strWSM.code,
         range: new vscode.Range(0, 0, endPos.line + 1, endPos.character + 1)
       }
     ]
+  }
+
+  return await utils.consumeScriptModule({ document, projectRoot, consumer })
+}
+
+async function fixLegacySyntaxAction(
+  document: Pick<vscode.TextDocument, 'fileName' | 'getText'>,
+  projectRoot: string,
+  endPos: vscode.Position,
+  token?: vscode.CancellationToken
+): Promise<vscode.ProviderResult<vscode.TextEdit>> {
+  const consumer = async ({ entryContent }: utils.IConsumerProps) => {
+    let config = await prettier.resolveConfig(path.join(projectRoot, '.prettierrc'))
+
+    if (config) config = { ...config, parser: 'typescript' }
+    else config = { parser: 'typescript' }
+
+    if (token?.isCancellationRequested) return
+
+    const newText = await prettier.format(entryContent, config)
+    const unformattedDocumentAST = cUtils.parse(document.getText())
+    const formattedDocumentAST = cUtils.parse(newText)
+    const sn = await compiler.fixLegacyAstNodes(unformattedDocumentAST, formattedDocumentAST)
+    const strWSM = sn.toStringWithSourceMap({ file: path.relative(projectRoot, document.fileName) })
+
+    return {
+      newText: strWSM.code,
+      range: new vscode.Range(0, 0, endPos.line + 1, endPos.character + 1)
+    }
   }
 
   return await utils.consumeScriptModule({ document, projectRoot, consumer })
@@ -912,11 +968,12 @@ async function getLocalBundle(
 
   const globalDeps = await utils.getGlobalDeps(projectRoot)
 
-  const localBundle = await compile(path.join(document.fileName), {
-    projectRoot,
-    modules: [...globalDeps],
-    skipAttachGlobalScript: true
-  })
+  const localBundle = await compiler
+    .compile(path.join(document.fileName), {
+      projectRoot,
+      modules: [...globalDeps],
+      skipAttachGlobalScript: true
+    })
     .then(sn => sn.toStringWithSourceMap({ file: path.relative(projectRoot, document.fileName) }))
     .then(async strWSM => {
       const rawSourceMap = strWSM.map.toString()
@@ -1063,5 +1120,6 @@ export const intellisense = utils.track({
   getFormattingEditsForDocument,
   getFoldingRanges,
   getLocalBundle,
-  getModuleInfo
+  getModuleInfo,
+  fixLegacySyntaxAction
 })

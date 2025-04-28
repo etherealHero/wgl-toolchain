@@ -1,5 +1,15 @@
 # Change Log
 
+## 0.3.0
+
+- format without edit syntax
+- code refactor feature WGL to ES syntax
+- set project scope in request strategy for global symbols by default 
+- fix infinity loop reload intellisence on exception (new ext option exception behaviour)
+- fix duplicate definitions (source path case sensitive)
+- fix parse module resolution statement with space indent of start of line
+- fix transpile endregion tag with space indent of start of line
+
 ## 0.2.3
 
 - fix double eof after format raw script file with existing eof

@@ -54,9 +54,9 @@ export type TNode = Node | ImportNode | RegionNode
 
 function transpileRegionBrackets(code: string) {
   if (code.replace(/#text/g, '').trim() === '') return code.replace(/#text(\n|\r\n)/g, '`')
-  if (code.replace(/#endtext/g, '').trim() === '') return code.replace(/#endtext/g, '`;')
+  if (code.replace(/#endtext/g, '').trim() === '') return code.replace(/\s*#endtext/g, '`;')
   if (code.replace(/#sql/g, '').trim() === '') return code.replace(/#sql(\n|\r\n)/g, '`')
-  if (code.replace(/#endsql/g, '').trim() === '') return code.replace(/#endsql/g, '`;')
+  if (code.replace(/#endsql/g, '').trim() === '') return code.replace(/\s*#endsql/g, '`;')
   return code
 }
 
@@ -113,6 +113,178 @@ export async function compile(file: string, opt: utils.CompileOptions): Promise<
           : text
       )
     )
+  }
+
+  return new sm.SourceNode(null, null, null, chunks)
+}
+
+/**
+ * Merge WGL into ES ast for formatting features
+ * - semi included
+ * - `\r\n` breakline mode
+ * @param WGLCompatibilityAst legacy syntax
+ * @param ESCompatibilityAST es syntax
+ * @returns
+ */
+export async function saveLegacyAstNodes(
+  WGLCompatibilityAst: AST<TNode>,
+  ESCompatibilityAST: AST<TNode>
+): Promise<sm.SourceNode> {
+  const chunks: Array<string | sm.SourceNode> = []
+  let wglIndex = 0
+  let esIndex = 0
+
+  while (esIndex < ESCompatibilityAST.length) {
+    const esNode = ESCompatibilityAST[esIndex]
+
+    if (!(esNode.type === 'moduleResolution' || esNode.type === 'region')) {
+      const { line, column } = esNode.location.start
+      chunks.push(new sm.SourceNode(line, column - 1, null, esNode.text))
+      esIndex++
+      continue
+    }
+
+    while (wglIndex < WGLCompatibilityAst.length) {
+      const wglNode = WGLCompatibilityAst[wglIndex]
+
+      if (wglNode.type !== esNode.type) {
+        wglIndex++
+        continue
+      }
+
+      if (wglNode.type === 'moduleResolution') {
+        const wglImport = wglNode as ImportNode
+        const { line, column } = wglImport.location.start
+
+        chunks.push(
+          new sm.SourceNode(
+            line,
+            column - 1,
+            null,
+            wglImport.kind === 'WGLScript'
+              ? `#include <${wglImport.href}>`
+              : `import "${wglImport.href}";`
+          )
+        )
+      }
+
+      if (wglNode.type === 'region') {
+        const wglRegion = wglNode as RegionNode
+        const esRegion = esNode as RegionNode
+
+        const startRegion = wglRegion.body[0]
+        chunks.push(
+          new sm.SourceNode(
+            startRegion.location.start.line,
+            startRegion.location.start.column - 1,
+            null,
+            wglRegion.kind === 'sql' || wglRegion.kind === 'text'
+              ? `\r\n${startRegion.text}`
+              : startRegion.text
+          )
+        )
+
+        const contentLines = esRegion.body.slice(1, -1)
+        for (const line of contentLines) {
+          chunks.push(
+            new sm.SourceNode(
+              line.location.start.line,
+              line.location.start.column - 1,
+              null,
+              line.text
+            )
+          )
+        }
+
+        const endRegion = wglRegion.body[wglRegion.body.length - 1]
+        chunks.push(
+          new sm.SourceNode(
+            endRegion.location.start.line,
+            endRegion.location.start.column - 1,
+            null,
+            endRegion.text
+          )
+        )
+
+        if (
+          ESCompatibilityAST[esIndex + 1].text === ';' &&
+          (wglRegion.kind === 'sql' || wglRegion.kind === 'text')
+        ) {
+          esIndex++
+        }
+      }
+
+      wglIndex++
+      esIndex++
+      break
+    }
+  }
+
+  return new sm.SourceNode(null, null, null, chunks)
+}
+
+/**
+ * Merge WGL into ES ast for formatting features
+ * - semi included
+ * - `\r\n` breakline mode
+ * @param WGLCompatibilityAst legacy syntax
+ * @param ESCompatibilityAST es syntax
+ * @returns
+ */
+export async function fixLegacyAstNodes(
+  WGLCompatibilityAst: AST<TNode>,
+  ESCompatibilityAST: AST<TNode>
+): Promise<sm.SourceNode> {
+  const chunks: Array<string | sm.SourceNode> = []
+  let wglIndex = 0
+  let esIndex = 0
+
+  while (wglIndex < WGLCompatibilityAst.length) {
+    const wglNode = WGLCompatibilityAst[wglIndex]
+
+    if (!(wglNode.type === 'moduleResolution' || wglNode.type === 'region')) {
+      const { line, column } = wglNode.location.start
+      chunks.push(new sm.SourceNode(line, column - 1, null, wglNode.text))
+      wglIndex++
+      continue
+    }
+
+    while (esIndex < ESCompatibilityAST.length) {
+      const esNode = ESCompatibilityAST[esIndex]
+
+      if (esNode.type !== wglNode.type) {
+        esIndex++
+        continue
+      }
+
+      if (esNode.type === 'moduleResolution') {
+        chunks.push(
+          new sm.SourceNode(
+            esNode.location.start.line,
+            esNode.location.start.column - 1,
+            null,
+            esNode.text
+          )
+        )
+      }
+
+      if (esNode.type === 'region') {
+        for (const regionNodes of (esNode as RegionNode).body) {
+          chunks.push(
+            new sm.SourceNode(
+              regionNodes.location.start.line,
+              regionNodes.location.start.column - 1,
+              null,
+              regionNodes.text
+            )
+          )
+        }
+      }
+
+      wglIndex++
+      esIndex++
+      break
+    }
   }
 
   return new sm.SourceNode(null, null, null, chunks)

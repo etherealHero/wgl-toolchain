@@ -31,13 +31,13 @@ start
   / "" // empty file
 
 ImportStatement
-  = "import" (!EOL Spaces)* href:ImportFilePathLiteral (!EOL Spaces)* ";"?
+  = (!EOL Spaces)* "import" (!EOL Spaces)* href:ImportFilePathLiteral (!EOL Spaces)* ";"?
     { return passModuleResolutionExpression("ECMAScript", text(), location(), href) }
 ImportFilePathLiteral
   = '"' chars:([^"\r\n] / "\\" .)* '"' { return chars.join(''); }
   / "'" chars:([^'\r\n] / "\\" .)* "'" { return chars.join(''); }
 IncludeStatement
-  = "#include" (!EOL Spaces)* href:IncludeFilePathLiteral (!EOL Spaces)*
+  = (!EOL Spaces)* "#include" (!EOL Spaces)* href:IncludeFilePathLiteral (!EOL Spaces)*
     { return passModuleResolutionExpression("WGLScript", text(), location(), href) }
 IncludeFilePathLiteral = "<" chars:([^>\r\n] / "\\" .)* ">" { return chars.join(''); }
 
@@ -107,7 +107,7 @@ RText
   = t:(SRText RTextLines ERText)
     { return passRegionExpression("text", text(), location(), t) }     
 RTextLines = head:RTextLine tail:(EOL RTextLine)* { return buildList(head, tail, 1); }
-RTextLine = (!"#endtext" !EOL .)* { return passRegionLine(text(), location()) }
+RTextLine = (!ERText !EOL .)* { return passRegionLine(text(), location()) }
 SRText = (Spaces !EOL)* "#text" EOL { return passRegionLine(text(), location()) }
 ERText = (Spaces !EOL)* "#endtext" { return passRegionLine(text(), location()) }
 
@@ -115,7 +115,7 @@ RSql
   = t:(SRSql RSqlLines ERSql)
     { return passRegionExpression("sql", text(), location(), t) }     
 RSqlLines = head:RSqlLine tail:(EOL RSqlLine)* { return buildList(head, tail, 1); }
-RSqlLine = (!"#endsql" !EOL .)* { return passRegionLine(text(), location()) }
+RSqlLine = (!ERSql !EOL .)* { return passRegionLine(text(), location()) }
 SRSql = (Spaces !EOL)* "#sql" EOL { return passRegionLine(text(), location()) }
 ERSql = (Spaces !EOL)* "#endsql" { return passRegionLine(text(), location()) }
 

@@ -2,7 +2,7 @@
   "name": "wgl-toolchain",
   "displayName": "WGLScript toolchain",
   "description": "WGLScript formatter, linter, intellisense for VS Code",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "publisher": "etherealhero",
   "repository": "https://github.com/etherealHero/wgl-toolchain",
   "keywords": ["wglscript", "formatter", "linter", "intellisense"],
@@ -61,7 +61,7 @@
             "Search global Symbol in whole project"
           ],
           "enumItemLabels": ["Bundle scope", "Project"],
-          "default": "bundle",
+          "default": "project",
           "markdownDescription": "The request processing strategy (find all references, rename features) in the Intelligent Service for Symbol that **defined** in the global script module"
         },
         "wglscript.intellisense.requestDepthStrategy.librarySymbols": {
@@ -164,7 +164,15 @@
           "markdownEnumDescriptions": ["Enable feature", "Disable feature"],
           "enumItemLabels": ["Enable", "Disable"],
           "default": "enabled",
-          "markdownDescription": "Support for source code [formatting](https://code.visualstudio.com/docs/editor/codebasics#_formatting). Format Document (`Shift+Alt+F`) - Format the entire active file."
+          "markdownDescription": "Support for source code [formatting](https://code.visualstudio.com/docs/editor/codebasics#_formatting). Format Document (`Shift+Alt+F`) - Format the entire active file. You can configure formatter via [Prettier config](https://prettier.io/docs/options) file '.prettierrc' in project root path"
+        },
+        "wglscript.intellisense.features.codeActions": {
+          "type": "string",
+          "enum": ["enabled", "disabled"],
+          "markdownEnumDescriptions": ["Enable feature", "Disable feature"],
+          "enumItemLabels": ["Enable", "Disable"],
+          "default": "enabled",
+          "markdownDescription": "Provide the user with possible corrective [actions](https://code.visualstudio.com/api/language-extensions/programmatic-language-features#possible-actions-on-errors-or-warnings) right next to an error or warning. If actions are available, a light bulb appears next to the error or warning"
         },
         "wglscript.intellisense.requestDepthStrategy.sliceModuleReferencesLength": {
           "type": "integer",
@@ -189,6 +197,17 @@
           "maximum": 50,
           "default": 20,
           "markdownDescription": "Maximum TypeScript Virtual File System threads for workspace features find refs, rename Symbol. Too large a setting can lead to memory failure and service failure"
+        },
+        "wglscript.intellisense.exceptionBehaviour": {
+          "type": "string",
+          "enum": ["cleanCache", "restartExtensionHost"],
+          "markdownEnumDescriptions": [
+            "Clean cache (faster, unstable) on exception",
+            "Restart extension host (slowlier, safer) on exception"
+          ],
+          "enumItemLabels": ["Enable", "Disable"],
+          "default": "restartExtensionHost",
+          "markdownDescription": "Behaviour on service exception"
         },
         "wglscript.globalScript.path": {
           "type": "string",

@@ -47,13 +47,21 @@ export function logtime<T extends AnyFn>(fn: T, ...args: Parameters<T>): ReturnT
 
 export const restartService = () => {
   try {
-    ext.diagnosticsCollection.clear()
-    bundleInfoRepository.clear()
-    compilerUtils.astStorage.clear()
+    const exceptionBehaviour = getExtOption<'cleanCache' | 'restartExtensionHost'>(
+      'intellisense.exceptionBehaviour'
+    )
 
-    compilerUtils.gls.code = ''
-    compilerUtils.gls.sourcemap = ''
-    compilerUtils.gls.modules = new Map()
+    if (exceptionBehaviour === 'cleanCache') {
+      ext.diagnosticsCollection.clear()
+      bundleInfoRepository.clear()
+      compilerUtils.astStorage.clear()
+
+      compilerUtils.gls.code = ''
+      compilerUtils.gls.sourcemap = ''
+      compilerUtils.gls.modules = new Map()
+    } else if (exceptionBehaviour === 'restartExtensionHost') {
+      vscode.commands.executeCommand('workbench.action.restartExtensionHost')
+    }
   } catch (_) {}
 
   const wsf = vscode.workspace.workspaceFolders

@@ -4,6 +4,7 @@
   "wglscript.globalScript.path": "Lib/AppGlobalScript.js",
   "wglscript.intellisense.typescriptThreads": 20,
   "wglscript.intellisense.buildThreads": 250,
+  "wglscript.intellisense.exceptionBehaviour": "restartExtensionHost",
 
   "wglscript.intellisense.features.goToSymbolWorkspace": "enabled",
   "wglscript.intellisense.features.getSignatureHelp": "disabled",

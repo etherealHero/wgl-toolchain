@@ -10,11 +10,15 @@ import { type AST, type TNode, compile } from './compiler'
 /** Normalized path from {@link normalizePath} */
 export type TNormalizedPath = string
 
+export const parse: (content: string) => AST<TNode> = parser.parse
+
 export interface CompileOptions {
   projectRoot: string
   /** All modules which parsed & compiled (local and global modules) */
   modules: string[]
+  /** @default false */
   skipAttachGlobalScript?: boolean
+  /** @default false */
   skipAttachDependencies?: boolean
 }
 

@@ -48,7 +48,8 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(statusBar)
 
-    utils.restartService()
+    // уходит в рекурсию на старте
+    // utils.restartService()
 
     const diagnosticsStrategy = utils.getExtOption<'onchange' | 'onsave' | 'disabled'>(
       'intellisense.requestStrategy.diagnostics'
@@ -534,6 +535,40 @@ export function activate(context: vscode.ExtensionContext) {
             }
           } catch (error) {
             console.log(`ERROR: ${error}`)
+            utils.restartService()
+          }
+        }
+      })
+    )
+  }
+
+  if (
+    utils.getExtOption<'enabled' | 'disabled'>('intellisense.features.codeActions') === 'enabled'
+  ) {
+    context.subscriptions.push(
+      vscode.languages.registerCodeActionsProvider(['javascript'], {
+        provideCodeActions: async (document, range, context, token) => {
+          const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+
+          if (wsPath === undefined) return
+          if (context.triggerKind === vscode.CodeActionTriggerKind.Automatic) return null
+
+          const action = new vscode.CodeAction('WGL to ES syntax', vscode.CodeActionKind.Refactor)
+          const endPos = document.positionAt(document.getText().length - 1)
+
+          try {
+            const edit = await intellisense.fixLegacySyntaxAction(document, wsPath, endPos, token)
+            const wsEdit = new vscode.WorkspaceEdit()
+
+            if (!edit) return null
+
+            wsEdit.replace(document.uri, edit.range, edit.newText)
+            action.edit = wsEdit
+
+            return [action]
+          } catch (error) {
+            console.log(`ERROR: ${error}`)
+            vscode.window.showErrorMessage(`WGLFormatter ${error}`)
             utils.restartService()
           }
         }
