@@ -4,3 +4,5 @@
  */
 
 const USER = 'Maxim'
+
+const ROLE = 'Admin'

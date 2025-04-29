@@ -17,7 +17,6 @@ export const bundle = 'bundle.js'
 export const compilerOpts = {
   allowJs: true,
   module: ts.ModuleKind.CommonJS,
-  target: ts.ScriptTarget.ES2015,
   esModuleInterop: true,
   forceConsistentCasingInFileNames: true,
   skipDefaultLibCheck: true,
@@ -34,23 +33,24 @@ export const compilerOpts = {
 let fsMap: Map<string, string> | undefined
 
 function attachFsMap(projectRoot: string) {
-  // TODO: здесь разобраться и складывать только нужные либы
   if (fsMap?.size) return fsMap
-  fsMap = tsvfs.createDefaultMapFromNodeModules(compilerOpts)
+  fsMap = new Map<string, string>()
 
   try {
     const wgldts = fs.readFileSync(
       path.join(projectRoot, 'node_modules', '@types', 'wglscript', 'lib.wglscript.d.ts')
     )
+    const ES5Compatibility = fs.readFileSync(
+      path.join(projectRoot, 'node_modules', '@types', 'wglscript', 'lib.es5.d.ts')
+    )
 
-    fsMap.set('/lib.es5.d.ts', `${wgldts}${fsMap.get('/lib.es5.d.ts') as string}`)
+    fsMap.set('/lib.d.ts', `${wgldts}\r\n${ES5Compatibility}`)
   } catch (error) {
     console.log(
       'ERROR: types for WGLScript at node_modules/@types/wglscript/lib.wglscript.d.ts not found'
     )
   }
 
-  // TODO: записывать либы только если есть типы wglscript.d.ts
   // TODO: добавить опцию расширения по укаащнию d.ts проекта, выкидывать предупреждение для подтягивания пакетов `npm i`
   for (const lib of fsMap.keys()) {
     const dir = path.join(projectRoot, 'node_modules', '@types', 'wglscript', 'generated')
@@ -379,6 +379,30 @@ export async function consumeScriptModule<T>(
 
   if (isCancelled(props.token)) return
 
+  let bundlePosition: sm.NullablePosition | undefined
+
+  if (props.source === '/lib.d.ts') {
+    bundlePosition = props.position
+      ? { line: props.position.line + 1, column: props.position.character, lastColumn: null }
+      : { line: -1, column: -1, lastColumn: -1 }
+  } else {
+    bundlePosition = props.position
+      ? map.generatedPositionFor({
+          source: props.source ?? entry,
+          line: props.position.line + 1,
+          column: props.position.character
+        })
+      : { line: -1, column: -1, lastColumn: -1 }
+
+    if (
+      !bundlePosition ||
+      bundlePosition.line == null ||
+      bundlePosition.column == null ||
+      isCancelled(props.token)
+    )
+      return
+  }
+
   if (!env && props.getTypeScriptEnvironment) {
     const fsMap = attachFsMap(props.projectRoot)
     fsMap.set(bundle, bundleContent)
@@ -406,31 +430,10 @@ export async function consumeScriptModule<T>(
     }
   }
 
-  const bundlePosition = props.position
-    ? map.generatedPositionFor({
-        source: props.source ?? entry,
-        line: props.position.line + 1,
-        column: props.position.character
-      })
-    : { line: -1, column: -1, lastColumn: -1 }
+  const consumerProps = { bundlePosition, bundleContent, entryContent, entryAst, map, env }
+  const resolve = await props.consumer(consumerProps)
 
-  if (
-    !bundlePosition ||
-    bundlePosition.line == null ||
-    bundlePosition.column == null ||
-    isCancelled(props.token)
-  )
-    return
-
-  const resolve = await props.consumer({
-    bundlePosition,
-    bundleContent,
-    entryContent,
-    entryAst,
-    map,
-    env
-  })
-
+  if (!props.cacheTypeScriptEnvironment) env = undefined
   if (isCancelled(props.token)) return
 
   return resolve

@@ -106,9 +106,14 @@ export async function compile(file: string, opt: utils.CompileOptions): Promise<
         col,
         fileN,
         type === 'region'
-          ? (n as RegionNode).body.flatMap(rn => {
+          ? (n as RegionNode).body.flatMap((rn, i, l) => {
               const { line: ln, column: col } = rn.location.start
-              return new sm.SourceNode(ln, col - 1, fileN, transpileRegionBrackets(rn.text))
+              return new sm.SourceNode(
+                ln,
+                col - 1,
+                fileN,
+                i === 0 || i === l.length - 1 ? transpileRegionBrackets(rn.text) : rn.text
+              )
             })
           : text
       )

@@ -1,5 +1,13 @@
 # Change Log
 
+## 0.3.1
+
+- fix transpile regions in other regions
+- fix missing entry file on language feature request when overhead slice of modules
+- find references of library symbols (d.ts) in whole project feature
+- use only real Symbols from d.ts library
+- performance improvements & optimize service features (setup typescript environment as needed)
+
 ## 0.3.0
 
 - format without edit syntax

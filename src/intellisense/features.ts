@@ -339,9 +339,9 @@ async function getReferencesAtPosition(
 
     const R = libUtils.logtime(
       env.languageService.getReferencesAtPosition,
-      utils.bundle,
+      source === '/lib.d.ts' ? '/lib.d.ts' : utils.bundle,
       ts.getPositionOfLineAndCharacter(
-        env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+        env.getSourceFile(source === '/lib.d.ts' ? '/lib.d.ts' : utils.bundle) as ts.SourceFileLike,
         bundlePosition.line - 1,
         position.character
       )
@@ -495,7 +495,7 @@ async function getReferencesAtPositionInProject(
 
   // 1 глобальный скрипт определен
   const globalScript = path.join(projectRoot, libUtils.getExtOption<string>('globalScript.path'))
-  // const globalScriptN = cUtils.normalizePath(globalScript, projectRoot)
+  const globalScriptN = cUtils.normalizePath(globalScript, projectRoot)
 
   if (!fs.existsSync(globalScript)) {
     // все эти консоли переписать на channel расширения
@@ -507,24 +507,33 @@ async function getReferencesAtPositionInProject(
 
   const globalDeps = await utils.getGlobalDeps(projectRoot)
   const D = definitions[0]
+  const entry = cUtils.normalizePath(document.fileName, projectRoot)
   let modules: cUtils.TNormalizedPath[]
 
-  // 1.1 дефинишн находится в либе .d.ts
   if (D.source.match('node_modules\\\\@types')) {
-    // TODO: исключить зависимости глобалскрипта, нужен хойстинг по полученным файлам
-    // TODO: обратно запроксировать позицию в tsvfs (=> /lib.d.ts), поднять референсы также как в других флоу ниже
-    return await getReferencesAtPosition(document, position, projectRoot, token)
-  }
+    // 1.1 дефинишн находится в либе .d.ts
+    const strategy = libUtils.getExtOption<'bundle' | 'project'>(
+      'intellisense.requestDepthStrategy.librarySymbols'
+    )
 
-  if (globalDeps.includes(D.source)) {
+    if (strategy === 'project') {
+      // TODO: нужен хойстинг по полученным файлам
+      modules = await utils.getJsFiles(projectRoot, searchPattern)
+      modules = modules.filter(m => !globalDeps.includes(m))
+      D.source = `/${path.basename(D.source)}`
+    } else {
+      return await getReferencesAtPosition(document, position, projectRoot, token)
+    }
+  } else if (globalDeps.includes(D.source)) {
     // 1.2 дефинишн находится в глобалскрипте
     const strategy = libUtils.getExtOption<'bundle' | 'project'>(
       'intellisense.requestDepthStrategy.globalSymbols'
     )
 
     if (strategy === 'project') {
-      // TODO: исключить зависимости глобалскрипта, нужен хойстинг по полученным файлам
+      // TODO: нужен хойстинг по полученным файлам
       modules = await utils.getJsFiles(projectRoot, searchPattern)
+      modules = modules.filter(m => !globalDeps.includes(m))
     } else {
       return await getReferencesAtPosition(document, position, projectRoot, token)
     }
@@ -555,6 +564,8 @@ async function getReferencesAtPositionInProject(
   let postfix = ''
   if (modulesLen > extModulesLenOption) {
     modules = utils.chunkedArray(modules, extModulesLenOption)[0]
+    if (!modules.includes(entry)) modules.push(entry)
+    if (!modules.includes(globalScriptN)) modules.push(globalScriptN)
     postfix = ` (${modulesLen - modules.length} skipped)`
   }
 
@@ -735,7 +746,7 @@ async function getModuleReferences(
   return moduleReferences
 }
 
-// TODO: добавить линтер с исправлением #include #(sql|text) callExpressionAssignment
+// TODO: добавить линтер с исправлением callExpressionAssignment
 async function getDiagnostics(
   document: Pick<vscode.TextDocument, 'fileName'>,
   projectRoot: string
@@ -845,7 +856,6 @@ async function getDiagnostics(
 }
 
 // TODO: add support Octal literals
-// TODO: add option "save wglscript syntax" for #sql etc.
 async function getFormattingEditsForDocument(
   document: Pick<vscode.TextDocument, 'fileName' | 'getText'>,
   projectRoot: string,

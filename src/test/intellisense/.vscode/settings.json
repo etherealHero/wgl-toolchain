@@ -22,7 +22,7 @@
   "wglscript.intellisense.requestDepthStrategy.localSymbols": "project",
   "wglscript.intellisense.requestDepthStrategy.sliceModuleReferencesLength": 20,
 
-  "wglscript.intellisense.requestStrategy.diagnostics": "disabled",
+  "wglscript.intellisense.requestStrategy.diagnostics": "onchange",
   "wglscript.intellisense.diagnostics.ignoreCodes": [],
   "wglscript.intellisense.diagnostics.allowedErrorCodes": [7006]
 }
