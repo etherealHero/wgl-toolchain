@@ -45,11 +45,11 @@ export function logtime<T extends AnyFn>(fn: T, ...args: Parameters<T>): ReturnT
   return result
 }
 
-export const restartService = () => {
+export const restartService = (behaviour?: 'cleanCache' | 'restartExtensionHost') => {
   try {
-    const exceptionBehaviour = getExtOption<'cleanCache' | 'restartExtensionHost'>(
-      'intellisense.exceptionBehaviour'
-    )
+    const exceptionBehaviour =
+      behaviour ||
+      getExtOption<'cleanCache' | 'restartExtensionHost'>('intellisense.exceptionBehaviour')
 
     if (exceptionBehaviour === 'cleanCache') {
       ext.diagnosticsCollection.clear()
@@ -125,6 +125,61 @@ export async function showBundle() {
     vscode.TextEditorRevealType.InCenter
   )
 }
+
+/** @debug */
+/*
+export async function _showBuildOutput(
+  bundleInfo: Pick<
+    typeof bundleInfoRepository extends Map<infer _, infer V> ? V : never,
+    'map' | 'bundleContent'
+  >
+) {
+  const activeTE = vscode.window.activeTextEditor
+
+  if (!activeTE) return
+
+  const wsPath = vscode.workspace.getWorkspaceFolder(activeTE.document.uri)?.uri.fsPath
+
+  if (!wsPath) return
+
+  // const bundleInfo = bundleInfoRepository.get(
+  //   compilerUtils.normalizePath(activeTE.document.fileName, wsPath)
+  // )
+
+  if (!bundleInfo) return
+
+  const bundlePosition = bundleInfo.map.generatedPositionFor({
+    source: compilerUtils.normalizePath(activeTE.document.fileName, wsPath),
+    line: activeTE.selection.active.line + 1,
+    column: activeTE.selection.active.character
+  })
+
+  if (!bundlePosition || bundlePosition.line == null || bundlePosition.column == null) return
+
+  const newDocument = await vscode.workspace.openTextDocument({
+    content: bundleInfo.bundleContent,
+    language: 'javascript'
+  })
+
+  const secondEditor = await vscode.window.showTextDocument(newDocument, {
+    viewColumn: vscode.ViewColumn.Beside,
+    preserveFocus: false
+  })
+
+  secondEditor.selection = new vscode.Selection(
+    new vscode.Position(bundlePosition.line - 1, activeTE.selection.active.character),
+    new vscode.Position(bundlePosition.line - 1, activeTE.selection.active.character)
+  )
+
+  secondEditor.revealRange(
+    new vscode.Range(
+      new vscode.Position(bundlePosition.line - 1, activeTE.selection.active.character),
+      new vscode.Position(bundlePosition.line - 1, activeTE.selection.active.character)
+    ),
+    vscode.TextEditorRevealType.InCenter
+  )
+}
+// */
 
 export async function showLocalBundle() {
   const activeTE = vscode.window.activeTextEditor

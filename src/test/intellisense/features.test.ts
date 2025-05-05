@@ -2,7 +2,8 @@ import * as assert from 'assert'
 import * as path from 'path'
 import * as vscode from 'vscode'
 
-import { __dirnameProxy, waitForSelectionChange } from './helper'
+import { restartService } from '../../utils'
+import { __dirnameProxy, buildWithTreeShaking, waitForSelectionChange } from './helper'
 
 test('find definition of local Symbol', async () => {
   const entryUri = vscode.Uri.file(path.join(__dirnameProxy, 'entry.js'))
@@ -373,5 +374,85 @@ test('should resolve module', async () => {
     path.basename(activeEditor?.document.fileName || ''),
     'dep.js',
     'Module file of definition is valid'
+  )
+})
+
+test('should build bundle with tree shaking direct-inheritance', async () => {
+  restartService('cleanCache')
+  assert.equal(
+    await buildWithTreeShaking('direct-inheritance'),
+    '/* @@resolved double.js from entry.js */\n' +
+      '/* @@skippedByTreeShaking constants.js from double.js */\n' +
+      '\n' +
+      '\n' +
+      'function double(a) {\n' +
+      '  return a * 2\n' +
+      '}\n' +
+      '\n' +
+      '/* @@skippedByTreeShaking sum.js from entry.js */\n' +
+      '\n' +
+      '\n' +
+      'double(2)\n'
+  )
+})
+
+test('should build bundle with tree shaking direct-inheritance-reverse-import', async () => {
+  restartService('cleanCache')
+  assert.equal(
+    await buildWithTreeShaking('direct-inheritance-reverse-import'),
+    '/* @@skippedByTreeShaking sum.js from entry.js */\n' +
+      '\n' +
+      '/* @@resolved double.js from entry.js */\n' +
+      '/* @@skippedByTreeShaking constants.js from double.js */\n' +
+      '\n' +
+      '\n' +
+      'function double(a) {\n' +
+      '  return a * 2\n' +
+      '}\n' +
+      '\n' +
+      '\n' +
+      'double(2)\n'
+  )
+})
+
+test('should build bundle with tree shaking indirect-inheritance', async () => {
+  restartService('cleanCache')
+  assert.equal(
+    await buildWithTreeShaking('indirect-inheritance'),
+    '/* @@resolved dep.js from entry.js */\n' +
+      '/* @@resolved double.js from dep.js */\n' +
+      '/* @@skippedByTreeShaking constants.js from double.js */\n' +
+      '\n' +
+      '\n' +
+      'function double(a) {\n' +
+      '  return a * 2\n' +
+      '}\n' +
+      '\n' +
+      '/* @@skippedByTreeShaking sum.js from dep.js */\n' +
+      '\n' +
+      '\n' +
+      '\n' +
+      'double(2)\n'
+  )
+})
+
+test('should build bundle with tree shaking indirect-inheritance-reverse-import', async () => {
+  restartService('cleanCache')
+  assert.equal(
+    await buildWithTreeShaking('indirect-inheritance-reverse-import'),
+    '/* @@resolved dep.js from entry.js */\n' +
+      '/* @@skippedByTreeShaking sum.js from dep.js */\n' +
+      '\n' +
+      '/* @@resolved double.js from dep.js */\n' +
+      '/* @@skippedByTreeShaking constants.js from double.js */\n' +
+      '\n' +
+      '\n' +
+      'function double(a) {\n' +
+      '  return a * 2\n' +
+      '}\n' +
+      '\n' +
+      '\n' +
+      '\n' +
+      'double(2)\n'
   )
 })

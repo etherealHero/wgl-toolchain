@@ -20,6 +20,13 @@ export interface CompileOptions {
   skipAttachGlobalScript?: boolean
   /** @default false */
   skipAttachDependencies?: boolean
+  /** @default false */
+  skipAttachNonImportStatements?: boolean
+  /** works correctly when all options like 'skip<Any>' disabled */
+  treeShaking?: {
+    searchPattern: RegExp | string
+    dependencyHasPatternMatch?: true
+  }
 }
 
 /**
@@ -29,6 +36,28 @@ export interface CompileOptions {
  */
 export const normalizePath = (file: string, projectRoot: string): TNormalizedPath =>
   path.join(file.replace(projectRoot, '').replace(/^[\/\\]*/, ''))
+
+export async function getDocumentContent(
+  fsPath: string,
+  projectRoot: string
+): Promise<string | null> {
+  let content = ''
+  try {
+    const document = vscode.workspace.textDocuments.find(
+      d => d.uri.fsPath === vscode.Uri.file(fsPath).fsPath
+    )
+    if (document) {
+      content = document.getText()
+    } else {
+      const readData = await vscode.workspace.fs.readFile(vscode.Uri.file(fsPath))
+      content = Buffer.from(readData).toString('utf8')
+    }
+    return content
+  } catch (_) {
+    console.log(`ERROR: Document ${normalizePath(fsPath, projectRoot)} not exists`)
+    return null
+  }
+}
 
 // TODO: переделать в класс
 export const astStorage = new Map<TNormalizedPath, { order: number; n: TNode }[]>()
@@ -40,21 +69,8 @@ export async function parseScriptModule(file: string, projectRoot: string): Prom
     return astStack.sort((a, b) => a.order - b.order).map(r => r.n)
   }
 
-  let content = ''
-  try {
-    const document = vscode.workspace.textDocuments.find(
-      d => d.uri.fsPath === vscode.Uri.file(file).fsPath
-    )
-    if (document) {
-      content = document.getText()
-    } else {
-      const readData = await vscode.workspace.fs.readFile(vscode.Uri.file(file))
-      content = Buffer.from(readData).toString('utf8')
-    }
-  } catch (_) {
-    console.log(`ERROR: Script module ${fileNormalized} not exists`)
-    return []
-  }
+  const content = await getDocumentContent(file, projectRoot)
+  if (!content) return []
 
   try {
     const ast: AST<TNode> = libUtils.logtime(parser.parse, content)
@@ -113,7 +129,7 @@ export async function attachGlobalScript(
 
   let globalScriptSN: sm.SourceNode
 
-  if (gls.code === '') {
+  if (gls.code === '' || opt.treeShaking?.searchPattern) {
     globalScriptSN = await compile(globalScript, opt)
     const strWSM = globalScriptSN.toStringWithSourceMap()
 

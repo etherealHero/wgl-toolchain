@@ -8,6 +8,7 @@ import { intellisense } from './intellisense/features'
 export let diagnosticsCollection: vscode.DiagnosticCollection
 
 // TODO: активация только на WGLProject
+// TODO: разобрать в каких еще фичах можно применить tree shaking
 export function activate(context: vscode.ExtensionContext) {
   console.log('Extension "wgl-toolchain" is now active')
 
@@ -319,7 +320,7 @@ export function activate(context: vscode.ExtensionContext) {
               position,
               wsPath,
               token,
-              new RegExp(word, 'm')
+              new RegExp(`[^a-zA-Z0-9$_]${word}[^a-zA-Z0-9$_]`, 'm')
             )
 
             return refs.map(d => ({

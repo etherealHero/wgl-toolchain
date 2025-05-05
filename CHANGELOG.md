@@ -1,5 +1,11 @@
 # Change Log
 
+## 0.3.2
+
+- performance improvements by modules tree shaking
+- performance improvements by skip serialize source-maps
+- performance improvements on search module references by stripped-down compile mode
+
 ## 0.3.1
 
 - fix transpile regions in other regions

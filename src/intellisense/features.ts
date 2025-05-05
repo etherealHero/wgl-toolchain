@@ -319,14 +319,16 @@ async function getSignatureHelpItems(
  * @param source optional normalized path of TextDocument ot override source entry for proxies bundle position ({@link document} - default source)
  */
 async function getReferencesAtPosition(
+  // TODO: переделать под объект-пропсы
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
   token?: undefined | vscode.CancellationToken | (vscode.CancellationToken | undefined)[],
   source?: cUtils.TNormalizedPath,
-  clearVTS?: boolean
+  clearVTS?: boolean,
+  searchPatternForTreeShaking?: RegExp | string
 ): Promise<wgl.SymbolEntry[]> {
-  const consumer = async ({ bundlePosition, map, env }: utils.IConsumerProps) => {
+  const consumer = async ({ bundlePosition, map, env, bundleContent }: utils.IConsumerProps) => {
     if (
       bundlePosition.line == null ||
       bundlePosition.column == null ||
@@ -375,6 +377,8 @@ async function getReferencesAtPosition(
 
     if (utils.isCancelled(token)) return
 
+    // libUtils._showBuildOutput({ bundleContent, map })
+
     return sourceR
   }
 
@@ -386,6 +390,7 @@ async function getReferencesAtPosition(
       consumer,
       token,
       source,
+      searchPatternForTreeShaking,
       cacheTypeScriptEnvironment: clearVTS ? false : undefined
     })) || []
   )
@@ -508,66 +513,110 @@ async function getReferencesAtPositionInProject(
   const globalDeps = await utils.getGlobalDeps(projectRoot)
   const D = definitions[0]
   const entry = cUtils.normalizePath(document.fileName, projectRoot)
-  let modules: cUtils.TNormalizedPath[]
-
-  if (D.source.match('node_modules\\\\@types')) {
-    // 1.1 дефинишн находится в либе .d.ts
-    const strategy = libUtils.getExtOption<'bundle' | 'project'>(
-      'intellisense.requestDepthStrategy.librarySymbols'
-    )
-
-    if (strategy === 'project') {
-      // TODO: нужен хойстинг по полученным файлам
-      modules = await utils.getJsFiles(projectRoot, searchPattern)
-      modules = modules.filter(m => !globalDeps.includes(m))
-      D.source = `/${path.basename(D.source)}`
-    } else {
-      return await getReferencesAtPosition(document, position, projectRoot, token)
-    }
-  } else if (globalDeps.includes(D.source)) {
-    // 1.2 дефинишн находится в глобалскрипте
-    const strategy = libUtils.getExtOption<'bundle' | 'project'>(
-      'intellisense.requestDepthStrategy.globalSymbols'
-    )
-
-    if (strategy === 'project') {
-      // TODO: нужен хойстинг по полученным файлам
-      modules = await utils.getJsFiles(projectRoot, searchPattern)
-      modules = modules.filter(m => !globalDeps.includes(m))
-    } else {
-      return await getReferencesAtPosition(document, position, projectRoot, token)
-    }
-  } else {
-    // 1.3 дефинишн находится в локальном скрипте
-    const strategy = libUtils.getExtOption<'bundle' | 'project'>(
-      'intellisense.requestDepthStrategy.localSymbols'
-    )
-
-    if (strategy === 'project') {
-      modules = await getModuleReferences(
-        D.source,
-        projectRoot,
-        token,
-        false /** init */,
-        searchPattern
-      )
-    } else {
-      return await getReferencesAtPosition(document, position, projectRoot, token)
-    }
-  }
-
-  const modulesLen = modules.length
-  const extModulesLenOption = libUtils.getExtOption<number>(
-    'intellisense.requestDepthStrategy.sliceModuleReferencesLength'
-  )
-
+  let modules: cUtils.TNormalizedPath[] = []
   let postfix = ''
-  if (modulesLen > extModulesLenOption) {
-    modules = utils.chunkedArray(modules, extModulesLenOption)[0]
-    if (!modules.includes(entry)) modules.push(entry)
-    if (!modules.includes(globalScriptN)) modules.push(globalScriptN)
-    postfix = ` (${modulesLen - modules.length} skipped)`
-  }
+
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Window,
+      cancellable: true,
+      title: 'WGLToolchain'
+    },
+    async (p, t) => {
+      p.report({ message: 'Searching module references' })
+
+      if (D.source.match('node_modules\\\\@types')) {
+        // 1.1 дефинишн находится в либе .d.ts
+        const strategy = libUtils.getExtOption<'bundle' | 'project'>(
+          'intellisense.requestDepthStrategy.librarySymbols'
+        )
+
+        if (strategy === 'project') {
+          modules = await utils.getJsFiles(projectRoot, searchPattern)
+          modules = modules.filter(m => !globalDeps.includes(m))
+          D.source = `/${path.basename(D.source)}`
+        } else {
+          return await getReferencesAtPosition(
+            document,
+            position,
+            projectRoot,
+            token,
+            undefined,
+            undefined,
+            searchPattern
+          )
+        }
+      } else if (globalDeps.includes(D.source)) {
+        // 1.2 дефинишн находится в глобалскрипте
+        const strategy = libUtils.getExtOption<'bundle' | 'project'>(
+          'intellisense.requestDepthStrategy.globalSymbols'
+        )
+
+        if (strategy === 'project') {
+          modules = await utils.getJsFiles(projectRoot, searchPattern)
+          modules = modules.filter(m => !globalDeps.includes(m))
+        } else {
+          return await getReferencesAtPosition(
+            document,
+            position,
+            projectRoot,
+            token,
+            undefined,
+            undefined,
+            searchPattern
+          )
+        }
+      } else {
+        // 1.3 дефинишн находится в локальном скрипте
+        const strategy = libUtils.getExtOption<'bundle' | 'project'>(
+          'intellisense.requestDepthStrategy.localSymbols'
+        )
+
+        if (strategy === 'project') {
+          modules = await getModuleReferences(
+            D.source,
+            projectRoot,
+            token,
+            false /** init */,
+            searchPattern
+          )
+        } else {
+          return await getReferencesAtPosition(
+            document,
+            position,
+            projectRoot,
+            token,
+            undefined,
+            undefined,
+            searchPattern
+          )
+        }
+      }
+
+      const modulesLen = modules.length
+      const extModulesLenOption = libUtils.getExtOption<number>(
+        'intellisense.requestDepthStrategy.sliceModuleReferencesLength'
+      )
+
+      if (modulesLen > extModulesLenOption) {
+        modules = utils.chunkedArray(modules, extModulesLenOption)[0]
+
+        // TODO: принудительный хоистинг для широкого охвата символов при слайсе модулей, совместить с кешированием компиляции ??
+        /*
+        const modulesCopy = [...modules]
+        modules = []
+        for (const m of modulesCopy.filter(m => !globalDeps.includes(m))) {
+          const refs = await getModuleReferences(m, projectRoot, token, false, searchPattern)
+          for (const r of refs) if (!modules.includes(r)) modules.push(r)
+        }
+        // */
+      }
+
+      if (!modules.includes(entry)) modules.push(entry)
+      if (!modules.includes(globalScriptN)) modules.push(globalScriptN)
+      postfix = modulesLen - modules.length > 0 ? ` (${modulesLen - modules.length} skipped)` : ''
+    }
+  )
 
   const projectRefs = new Set<string>()
   let state = 0
@@ -597,7 +646,8 @@ async function getReferencesAtPositionInProject(
               projectRoot,
               [token, t],
               D.source,
-              true /** clear VTS after request */
+              true /** clear VTS after request */,
+              searchPattern
             )) {
               if (utils.isCancelled([token, t])) break
               projectRefs.add(JSON.stringify({ source, line, column, length }))
@@ -626,6 +676,8 @@ const modulesWithError = new Set<string>()
  * @param module module to search for links
  * @param projectRoot root system path of project
  * @param token optional cancellation token
+ * @param init first initialization on startup service
+ * @param searchPattern optional filter of module content
  * @returns
  */
 async function getModuleReferences(
@@ -705,10 +757,11 @@ async function getModuleReferences(
                   .compile(path.join(projectRoot, script), {
                     projectRoot,
                     modules: [...globalDeps],
-                    skipAttachGlobalScript: true
+                    skipAttachGlobalScript: true,
+                    skipAttachNonImportStatements: true
                   })
                   .then(sn => sn.toStringWithSourceMap({ file: script }))
-                  .then(strWSM => new sm.SourceMapConsumer(strWSM.map.toString()))
+                  .then(strWSM => sm.SourceMapConsumer.fromSourceMap(strWSM.map))
                   .then(map => {
                     state++
                     const now = Date.now()
@@ -986,8 +1039,7 @@ async function getLocalBundle(
     })
     .then(sn => sn.toStringWithSourceMap({ file: path.relative(projectRoot, document.fileName) }))
     .then(async strWSM => {
-      const rawSourceMap = strWSM.map.toString()
-      const map = await new sm.SourceMapConsumer(rawSourceMap)
+      const map = await sm.SourceMapConsumer.fromSourceMap(strWSM.map)
       const pos = map.generatedPositionFor({
         source: path.relative(projectRoot, document.fileName),
         line: position.line + 1,

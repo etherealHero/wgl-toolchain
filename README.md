@@ -19,6 +19,9 @@ This extension provides support for the WGLScript programming language.
 	- [x] rename symbol (in ScriptModule or Project)
 	- [x] find references (in ScriptModule or Project)
 	- [x] diagnostics
+	- [x] workspace & document symbols
+	- [x] breadcrumbs
+	- [x] code refactor
 
 ## 🚀 Examples
 

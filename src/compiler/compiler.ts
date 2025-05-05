@@ -69,6 +69,9 @@ export async function compile(file: string, opt: utils.CompileOptions): Promise<
   const ast: AST<TNode> = await utils.parseScriptModule(file, opt.projectRoot)
   opt.modules.push(fileN.toLowerCase())
 
+  const modulesRecoveryOnSkippedDependency = [...opt.modules]
+  let hoistingOnPatternMatch = false
+
   const chunks: Array<string | sm.SourceNode> = []
   if (!opt.skipAttachGlobalScript) await utils.attachGlobalScript(file, opt, chunks)
 
@@ -92,11 +95,32 @@ export async function compile(file: string, opt: utils.CompileOptions): Promise<
         continue
       }
 
-      const resolve = opt.modules.includes(moduleN.toLowerCase())
-        ? `/* @@unresolved ${moduleN} from ${fileN} */\n`
-        : [`/* @@resolved ${moduleN} from ${fileN} */\n`, await compile(module, opt)]
+      let resolve: Array<string | sm.SourceNode> | sm.SourceNode | string = ''
+
+      if (opt.modules.includes(moduleN.toLowerCase())) {
+        resolve = `/* @@unresolved ${moduleN} from ${fileN} */\n`
+      } else {
+        const dependency = await compile(module, opt)
+
+        if (opt.treeShaking?.searchPattern === undefined)
+          resolve = [`/* @@resolved ${moduleN} from ${fileN} */\n`, dependency]
+        else if (!opt.treeShaking?.dependencyHasPatternMatch) {
+          resolve = `/* @@skippedByTreeShaking ${moduleN} from ${fileN} */\n`
+          opt.modules = modulesRecoveryOnSkippedDependency
+        } else {
+          hoistingOnPatternMatch = true
+          opt.treeShaking.dependencyHasPatternMatch = undefined
+          resolve = [`/* @@resolved ${moduleN} from ${fileN} */\n`, dependency]
+        }
+      }
 
       chunks.push(new sm.SourceNode(ln, col, fileN, resolve))
+      continue
+    }
+
+    // TODO: это вроде надо только для хоистинга модулей, переделать без сурсмапов
+    if (opt.skipAttachNonImportStatements) {
+      chunks.push(new sm.SourceNode(ln, col, fileN, ';'))
       continue
     }
 
@@ -118,6 +142,17 @@ export async function compile(file: string, opt: utils.CompileOptions): Promise<
           : text
       )
     )
+  }
+
+  if (opt.treeShaking?.searchPattern) {
+    const searchPattern = opt.treeShaking?.searchPattern
+    const content = (await utils.getDocumentContent(file, opt.projectRoot)) || ''
+    let isMatch: boolean
+
+    if (typeof searchPattern !== 'string') isMatch = searchPattern.test(content)
+    else isMatch = RegExp(searchPattern).test(content)
+
+    if (isMatch || hoistingOnPatternMatch) opt.treeShaking.dependencyHasPatternMatch = true
   }
 
   return new sm.SourceNode(null, null, null, chunks)

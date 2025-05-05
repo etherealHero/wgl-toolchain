@@ -328,6 +328,8 @@ interface IConsumeScriptModuleProps<T> {
    * optional normalized path of TextDocument ot override source entry for proxies bundle position ({@link document} - default source)
    */
   source?: cUtils.TNormalizedPath
+
+  searchPatternForTreeShaking?: RegExp | string
 }
 
 export async function consumeScriptModule<T>(
@@ -344,7 +346,7 @@ export async function consumeScriptModule<T>(
   let map: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer | undefined
   let env: tsvfs.VirtualTypeScriptEnvironment | undefined = undefined
 
-  if (bundleInfoRepository.has(entry)) {
+  if (bundleInfoRepository.has(entry) && !props.searchPatternForTreeShaking) {
     const bundleInfo = bundleInfoRepository.get(entry) as IBundleInfo
 
     bundleContent = bundleInfo.bundleContent
@@ -353,15 +355,20 @@ export async function consumeScriptModule<T>(
     entryAst = bundleInfo.entryAst
     env = bundleInfo.env
   } else {
-    const sn = await compile(props.document.fileName, {
+    const compilerOpts: cUtils.CompileOptions = {
       projectRoot: props.projectRoot,
       modules: []
-    })
+    }
+
+    if (props.searchPatternForTreeShaking) {
+      compilerOpts.treeShaking = { searchPattern: props.searchPatternForTreeShaking }
+    }
+
+    const sn = await compile(props.document.fileName, compilerOpts)
 
     if (isCancelled(props.token)) return
 
     const codeWithSourceMap = sn.toStringWithSourceMap({ file: entry })
-    const rawSourceMap = codeWithSourceMap.map.toString()
     const snEntry = await compile(props.document.fileName, {
       projectRoot: props.projectRoot,
       modules: [],
@@ -373,7 +380,7 @@ export async function consumeScriptModule<T>(
 
     bundleContent = codeWithSourceMap.code
     entryContent = snEntry.toStringWithSourceMap({ file: entry }).code
-    map = await new sm.SourceMapConsumer(rawSourceMap)
+    map = await sm.SourceMapConsumer.fromSourceMap(codeWithSourceMap.map)
     entryAst = await cUtils.parseScriptModule(props.document.fileName, props.projectRoot)
   }
 
@@ -403,6 +410,9 @@ export async function consumeScriptModule<T>(
       return
   }
 
+  const isNeedCacheBundleInfo =
+    props.cacheTypeScriptEnvironment && !props.searchPatternForTreeShaking
+
   if (!env && props.getTypeScriptEnvironment) {
     const fsMap = attachFsMap(props.projectRoot)
     fsMap.set(bundle, bundleContent)
@@ -418,7 +428,7 @@ export async function consumeScriptModule<T>(
       compilerOpts
     )
 
-    if (props.cacheTypeScriptEnvironment) {
+    if (isNeedCacheBundleInfo) {
       bundleInfoRepository.set(entry, {
         dependencies: map.sources,
         bundleContent,
@@ -433,7 +443,7 @@ export async function consumeScriptModule<T>(
   const consumerProps = { bundlePosition, bundleContent, entryContent, entryAst, map, env }
   const resolve = await props.consumer(consumerProps)
 
-  if (!props.cacheTypeScriptEnvironment) env = undefined
+  if (!isNeedCacheBundleInfo) env = undefined
   if (isCancelled(props.token)) return
 
   return resolve

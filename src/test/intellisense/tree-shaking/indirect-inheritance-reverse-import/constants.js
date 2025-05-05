@@ -1,0 +1,1 @@
+const CONSTANT = 0
