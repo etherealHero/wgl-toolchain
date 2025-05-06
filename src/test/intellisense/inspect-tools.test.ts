@@ -17,9 +17,8 @@ test('should build & show bundle', async () => {
   let activeEditor = vscode.window.activeTextEditor
 
   // wait WGLScript Intellisense
-  await waitForSelectionChange({ timeoutInMilliseconds: 3000 })
+  await waitForSelectionChange({ timeoutInMilliseconds: 1500 })
   await vscode.commands.executeCommand('wglscript.showBundle')
-  await waitForSelectionChange({ timeoutInMilliseconds: 200 })
 
   activeEditor = vscode.window.activeTextEditor
 
@@ -43,10 +42,7 @@ test('should build & show local bundle', async () => {
 
   let activeEditor = vscode.window.activeTextEditor
 
-  // wait WGLScript Intellisense
-  await waitForSelectionChange({ timeoutInMilliseconds: 3000 })
   await vscode.commands.executeCommand('wglscript.showLocalBundle')
-  await waitForSelectionChange({ timeoutInMilliseconds: 200 })
 
   activeEditor = vscode.window.activeTextEditor
 
@@ -70,10 +66,7 @@ test('should build & show Module info', async () => {
 
   let activeEditor = vscode.window.activeTextEditor
 
-  // wait WGLScript Intellisense
-  await waitForSelectionChange({ timeoutInMilliseconds: 3000 })
   await vscode.commands.executeCommand('wglscript.showModuleInfo')
-  await waitForSelectionChange({ timeoutInMilliseconds: 200 })
 
   activeEditor = vscode.window.activeTextEditor
 

@@ -14,7 +14,8 @@ async function getDefinitionInfoAtPosition(
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
-  token?: vscode.CancellationToken
+  token?: vscode.CancellationToken,
+  searchPatternForTreeShaking?: string | RegExp
 ): Promise<wgl.SymbolEntry[]> {
   const consumer = async ({ map, bundlePosition, env, entryAst }: utils.IConsumerProps) => {
     if (token?.isCancellationRequested) return []
@@ -120,7 +121,18 @@ async function getDefinitionInfoAtPosition(
   }
 
   return (
-    (await utils.consumeScriptModule({ document, position, projectRoot, consumer, token })) || []
+    (await utils.consumeScriptModule({
+      document,
+      position,
+      projectRoot,
+      consumer,
+      token,
+      compileOptions: {
+        treeShaking: searchPatternForTreeShaking
+          ? { searchPattern: searchPatternForTreeShaking }
+          : undefined
+      }
+    })) || []
   )
 }
 
@@ -218,7 +230,8 @@ async function getQuickInfoAtPosition(
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
-  token?: vscode.CancellationToken
+  token?: vscode.CancellationToken,
+  searchPatternForTreeShaking?: RegExp | string
 ): Promise<vscode.MarkdownString[]> {
   const consumer = async ({ bundlePosition, env }: utils.IConsumerProps) => {
     if (
@@ -242,7 +255,18 @@ async function getQuickInfoAtPosition(
     )
   }
 
-  const QI = await utils.consumeScriptModule({ document, position, projectRoot, consumer, token })
+  const QI = await utils.consumeScriptModule({
+    document,
+    position,
+    projectRoot,
+    consumer,
+    token,
+    compileOptions: {
+      treeShaking: searchPatternForTreeShaking
+        ? { searchPattern: searchPatternForTreeShaking }
+        : undefined
+    }
+  })
 
   if (QI === undefined) return []
 
@@ -390,7 +414,11 @@ async function getReferencesAtPosition(
       consumer,
       token,
       source,
-      searchPatternForTreeShaking,
+      compileOptions: {
+        treeShaking: searchPatternForTreeShaking
+          ? { searchPattern: searchPatternForTreeShaking }
+          : undefined
+      },
       cacheTypeScriptEnvironment: clearVTS ? false : undefined
     })) || []
   )
@@ -449,7 +477,7 @@ async function getNavigationBarItems(
       })
 
       if (posS.source == null || posS.line == null) return
-      if (posS.source !== documentN && !includeWorkspaceSymbols) return
+      if (posS.source !== documentN.toLowerCase() && !includeWorkspaceSymbols) return
 
       const posE = map.originalPositionFor({
         line: end.line + 1,
@@ -457,7 +485,7 @@ async function getNavigationBarItems(
       })
 
       if (posE.source == null || posE.line == null) return
-      if (posE.source !== documentN && !includeWorkspaceSymbols) return
+      if (posE.source !== documentN.toLowerCase() && !includeWorkspaceSymbols) return
 
       sourceSymbols.push(
         new vscode.SymbolInformation(
@@ -477,7 +505,15 @@ async function getNavigationBarItems(
     return sourceSymbols
   }
 
-  return await utils.consumeScriptModule({ document, projectRoot, consumer, token })
+  return await utils.consumeScriptModule({
+    document,
+    projectRoot,
+    consumer,
+    token,
+    compileOptions: includeWorkspaceSymbols
+      ? {}
+      : { skipAttachGlobalScript: true, skipAttachDependencies: true }
+  })
 }
 
 /**
@@ -494,7 +530,13 @@ async function getReferencesAtPositionInProject(
   token?: vscode.CancellationToken,
   searchPattern?: RegExp
 ): Promise<wgl.SymbolEntry[]> {
-  const definitions = await getDefinitionInfoAtPosition(document, position, projectRoot, token)
+  const definitions = await getDefinitionInfoAtPosition(
+    document,
+    position,
+    projectRoot,
+    token,
+    searchPattern
+  )
 
   if (!definitions.length || utils.isCancelled(token)) return []
 
@@ -794,7 +836,7 @@ async function getModuleReferences(
       if (entry !== d && moduleReferencesStorage.has(d)) moduleReferencesStorage.delete(d)
 
   for (const [entry, deps] of moduleReferencesStorage)
-    if (deps.find(d => d === module)) moduleReferences.push(entry)
+    if (deps.find(d => d.toLowerCase() === module.toLowerCase())) moduleReferences.push(entry)
 
   return moduleReferences
 }
@@ -887,7 +929,7 @@ async function getDiagnostics(
       if (posE.source == null || posE.line == null) continue
 
       // TODO: сделать опцию в настройках расширения "стратегия запроса диагностик"
-      if (posS.source !== documentN) continue
+      if (posS.source !== documentN.toLowerCase()) continue
 
       if (!sourceD.has(posS.source)) sourceD.set(posS.source, [])
 
@@ -937,7 +979,14 @@ async function getFormattingEditsForDocument(
     ]
   }
 
-  return await utils.consumeScriptModule({ document, projectRoot, consumer })
+  return await utils.consumeScriptModule({
+    compileOptions: { skipAttachDependencies: true, skipAttachGlobalScript: true },
+    cacheTypeScriptEnvironment: false,
+    getTypeScriptEnvironment: false,
+    projectRoot,
+    document,
+    consumer
+  })
 }
 
 async function fixLegacySyntaxAction(
@@ -966,7 +1015,14 @@ async function fixLegacySyntaxAction(
     }
   }
 
-  return await utils.consumeScriptModule({ document, projectRoot, consumer })
+  return await utils.consumeScriptModule({
+    compileOptions: { skipAttachDependencies: true, skipAttachGlobalScript: true },
+    cacheTypeScriptEnvironment: false,
+    getTypeScriptEnvironment: false,
+    projectRoot,
+    document,
+    consumer
+  })
 }
 
 async function getFoldingRanges(
@@ -997,7 +1053,7 @@ async function getFoldingRanges(
       })
 
       if (posS.source == null || posS.line == null) return
-      if (posS.source !== documentN) return
+      if (posS.source !== documentN.toLowerCase()) return
 
       const posE = map.originalPositionFor({
         line: end.line + 1,
@@ -1005,7 +1061,7 @@ async function getFoldingRanges(
       })
 
       if (posE.source == null || posE.line == null) return
-      if (posE.source !== documentN) return
+      if (posE.source !== documentN.toLowerCase()) return
 
       sourceFR.push(
         new vscode.FoldingRange(
@@ -1019,7 +1075,13 @@ async function getFoldingRanges(
     return sourceFR
   }
 
-  return await utils.consumeScriptModule({ document, projectRoot, consumer, token })
+  return await utils.consumeScriptModule({
+    compileOptions: { skipAttachDependencies: true, skipAttachGlobalScript: true },
+    projectRoot,
+    document,
+    consumer,
+    token
+  })
 }
 
 async function getLocalBundle(

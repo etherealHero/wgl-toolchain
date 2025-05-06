@@ -156,13 +156,23 @@ export function activate(context: vscode.ExtensionContext) {
 
           if (wsPath === undefined) return
 
+          const wordPos = document.getWordRangeAtPosition(position)
+          let word = ''
+          if (wordPos && wordPos.start.line === wordPos.end.line) {
+            word = document
+              .lineAt(wordPos.start.line)
+              .text.slice(wordPos.start.character, wordPos.end.character)
+          }
+          const pattern = new RegExp(`[^a-zA-Z0-9$_]${word}[^a-zA-Z0-9$_]`, 'm')
+
           let di: wgl.SymbolEntry[] = []
           try {
             di = await intellisense.getDefinitionInfoAtPosition(
               { fileName: document.fileName },
               position,
               wsPath,
-              token
+              token,
+              pattern
             )
           } catch (error) {
             console.log(`ERROR: ${error}`)
@@ -244,12 +254,22 @@ export function activate(context: vscode.ExtensionContext) {
 
           if (wsPath === undefined) return
 
+          const wordPos = document.getWordRangeAtPosition(position)
+          let word = ''
+          if (wordPos && wordPos.start.line === wordPos.end.line) {
+            word = document
+              .lineAt(wordPos.start.line)
+              .text.slice(wordPos.start.character, wordPos.end.character)
+          }
+          const pattern = new RegExp(`[^a-zA-Z0-9$_]${word}[^a-zA-Z0-9$_]`, 'm')
+
           try {
             const quickInfo = await intellisense.getQuickInfoAtPosition(
               { fileName: document.fileName },
               position,
               wsPath,
-              token
+              token,
+              pattern
             )
 
             return { contents: quickInfo }
@@ -324,7 +344,7 @@ export function activate(context: vscode.ExtensionContext) {
             )
 
             return refs.map(d => ({
-              uri: vscode.Uri.file(path.join(wsPath, d.source)),
+              uri: vscode.Uri.file(utils.getRealCasePath(wsPath, d.source)),
               range: new vscode.Range(d.line, d.column, d.line, d.column + d.length)
             }))
           } catch (error) {
@@ -361,7 +381,7 @@ export function activate(context: vscode.ExtensionContext) {
               position,
               wsPath,
               token,
-              new RegExp(word, 'm')
+              new RegExp(`[^a-zA-Z0-9$_]${word}[^a-zA-Z0-9$_]`, 'm')
             )
 
             const wsEdit = new vscode.WorkspaceEdit()
@@ -404,13 +424,22 @@ export function activate(context: vscode.ExtensionContext) {
 
           if (wsPath === undefined) return
 
+          const wordPos = document.getWordRangeAtPosition(position)
+          let word = ''
+          if (wordPos && wordPos.start.line === wordPos.end.line) {
+            word = document
+              .lineAt(wordPos.start.line)
+              .text.slice(wordPos.start.character, wordPos.end.character)
+          }
+
           let di: wgl.SymbolEntry[] = []
           try {
             di = await intellisense.getDefinitionInfoAtPosition(
               { fileName: document.fileName },
               position,
               wsPath,
-              token
+              token,
+              new RegExp(`[^a-zA-Z0-9$_]${word}[^a-zA-Z0-9$_]`, 'm')
             )
           } catch (error) {
             console.log(`ERROR: ${error}`)

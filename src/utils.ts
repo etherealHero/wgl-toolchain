@@ -1,3 +1,4 @@
+import * as fs from 'fs'
 import * as path from 'path'
 import * as vscode from 'vscode'
 import * as compilerUtils from './compiler/utils'
@@ -340,4 +341,26 @@ export function didChangeTextDocumentHandler({
       }
     }
   }
+}
+
+export function getRealCasePath(projectRoot: string, module: string): string {
+  const absolutePath = path.join(projectRoot, module)
+  const parts = module.split(path.sep).filter(part => part.length > 0)
+  let currentPath = projectRoot
+
+  for (const part of parts) {
+    try {
+      const files = fs.readdirSync(currentPath)
+      const found = files.find(f => f.toLowerCase() === part.toLowerCase())
+
+      if (!found) return module
+
+      currentPath = path.join(currentPath, found)
+    } catch (error) {
+      console.error(`Error resolving case for path ${currentPath}:`, error)
+      return absolutePath
+    }
+  }
+
+  return currentPath
 }

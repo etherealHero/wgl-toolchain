@@ -66,8 +66,9 @@ function transpileRegionBrackets(code: string) {
  */
 export async function compile(file: string, opt: utils.CompileOptions): Promise<sm.SourceNode> {
   const fileN = utils.normalizePath(file, opt.projectRoot)
+  const fileNlc = fileN.toLowerCase()
   const ast: AST<TNode> = await utils.parseScriptModule(file, opt.projectRoot)
-  opt.modules.push(fileN.toLowerCase())
+  opt.modules.push(fileNlc)
 
   const modulesRecoveryOnSkippedDependency = [...opt.modules]
   let hoistingOnPatternMatch = false
@@ -91,7 +92,7 @@ export async function compile(file: string, opt: utils.CompileOptions): Promise<
       const moduleN = utils.normalizePath(module, opt.projectRoot)
 
       if (opt.skipAttachDependencies) {
-        chunks.push(new sm.SourceNode(ln, col, fileN, `import "${(n as ImportNode).href}";`))
+        chunks.push(new sm.SourceNode(ln, col, fileNlc, `import "${(n as ImportNode).href}";`))
         continue
       }
 
@@ -114,13 +115,13 @@ export async function compile(file: string, opt: utils.CompileOptions): Promise<
         }
       }
 
-      chunks.push(new sm.SourceNode(ln, col, fileN, resolve))
+      chunks.push(new sm.SourceNode(ln, col, fileNlc, resolve))
       continue
     }
 
     // TODO: это вроде надо только для хоистинга модулей, переделать без сурсмапов
     if (opt.skipAttachNonImportStatements) {
-      chunks.push(new sm.SourceNode(ln, col, fileN, ';'))
+      chunks.push(new sm.SourceNode(ln, col, fileNlc, ';'))
       continue
     }
 
@@ -128,14 +129,14 @@ export async function compile(file: string, opt: utils.CompileOptions): Promise<
       new sm.SourceNode(
         ln,
         col,
-        fileN,
+        fileNlc,
         type === 'region'
           ? (n as RegionNode).body.flatMap((rn, i, l) => {
               const { line: ln, column: col } = rn.location.start
               return new sm.SourceNode(
                 ln,
                 col - 1,
-                fileN,
+                fileNlc,
                 i === 0 || i === l.length - 1 ? transpileRegionBrackets(rn.text) : rn.text
               )
             })
@@ -201,9 +202,7 @@ export async function saveLegacyAstNodes(
             line,
             column - 1,
             null,
-            wglImport.kind === 'WGLScript'
-              ? `#include <${wglImport.href}>`
-              : `import "${wglImport.href}";`
+            wglImport.kind === 'WGLScript' ? `#include <${wglImport.href}>` : esNode.text
           )
         )
       }

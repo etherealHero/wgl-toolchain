@@ -5,6 +5,9 @@
 - performance improvements by modules tree shaking
 - performance improvements by skip serialize source-maps
 - performance improvements on search module references by stripped-down compile mode
+- fix formatting import statements
+- fix missing references when different module path writing by case sensitive
+- fix fold regions of source code
 
 ## 0.3.1
 

@@ -329,7 +329,9 @@ interface IConsumeScriptModuleProps<T> {
    */
   source?: cUtils.TNormalizedPath
 
-  searchPatternForTreeShaking?: RegExp | string
+  compileOptions?: Partial<
+    Pick<cUtils.CompileOptions, 'treeShaking' | 'skipAttachDependencies' | 'skipAttachGlobalScript'>
+  >
 }
 
 export async function consumeScriptModule<T>(
@@ -346,7 +348,13 @@ export async function consumeScriptModule<T>(
   let map: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer | undefined
   let env: tsvfs.VirtualTypeScriptEnvironment | undefined = undefined
 
-  if (bundleInfoRepository.has(entry) && !props.searchPatternForTreeShaking) {
+  const accessCacheBundleInfo = !(
+    props.compileOptions?.treeShaking?.searchPattern ||
+    props.compileOptions?.skipAttachDependencies ||
+    props.compileOptions?.skipAttachGlobalScript
+  )
+
+  if (bundleInfoRepository.has(entry) && accessCacheBundleInfo) {
     const bundleInfo = bundleInfoRepository.get(entry) as IBundleInfo
 
     bundleContent = bundleInfo.bundleContent
@@ -355,14 +363,10 @@ export async function consumeScriptModule<T>(
     entryAst = bundleInfo.entryAst
     env = bundleInfo.env
   } else {
-    const compilerOpts: cUtils.CompileOptions = {
-      projectRoot: props.projectRoot,
-      modules: []
-    }
-
-    if (props.searchPatternForTreeShaking) {
-      compilerOpts.treeShaking = { searchPattern: props.searchPatternForTreeShaking }
-    }
+    const compilerOpts: cUtils.CompileOptions = Object.assign(
+      { projectRoot: props.projectRoot, modules: [] },
+      props.compileOptions
+    )
 
     const sn = await compile(props.document.fileName, compilerOpts)
 
@@ -395,7 +399,7 @@ export async function consumeScriptModule<T>(
   } else {
     bundlePosition = props.position
       ? map.generatedPositionFor({
-          source: props.source ?? entry,
+          source: props.source ?? entry.toLowerCase(),
           line: props.position.line + 1,
           column: props.position.character
         })
@@ -410,8 +414,7 @@ export async function consumeScriptModule<T>(
       return
   }
 
-  const isNeedCacheBundleInfo =
-    props.cacheTypeScriptEnvironment && !props.searchPatternForTreeShaking
+  const isNeedCacheBundleInfo = props.cacheTypeScriptEnvironment && accessCacheBundleInfo
 
   if (!env && props.getTypeScriptEnvironment) {
     const fsMap = attachFsMap(props.projectRoot)

@@ -145,7 +145,7 @@ export async function attachGlobalScript(
   consumer.destroy()
 
   chunks.push(
-    new sm.SourceNode(null, null, fileN, [
+    new sm.SourceNode(null, null, fileN.toLowerCase(), [
       `/* @@resolved ${globalScriptN} from ${fileN} */\n`,
       globalScriptSN
     ])
