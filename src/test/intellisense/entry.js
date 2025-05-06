@@ -1,6 +1,6 @@
 import 'dep.js'
 
-sum(1, 2)
+const res = sum(1, 2)
 
 if (USER === 'Maxim') {
   unknownFunction(IDOK)

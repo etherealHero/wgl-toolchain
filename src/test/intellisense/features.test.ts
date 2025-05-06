@@ -3,26 +3,16 @@ import * as path from 'path'
 import * as vscode from 'vscode'
 
 import { restartService } from '../../utils'
-import { __dirnameProxy, buildWithTreeShaking, waitForSelectionChange } from './helper'
+import { __dirnameProxy, buildWithTreeShaking, loadExtensionCase } from './helper'
 
 test('find definition of local Symbol', async () => {
-  const entryUri = vscode.Uri.file(path.join(__dirnameProxy, 'entry.js'))
+  let activeEditor: vscode.TextEditor | undefined = await loadExtensionCase('entry.js')
 
-  for (const d of vscode.workspace.textDocuments) {
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
-  }
+  activeEditor.selection = new vscode.Selection(
+    new vscode.Position(2, 12),
+    new vscode.Position(2, 12)
+  )
 
-  const document = await vscode.workspace.openTextDocument(entryUri)
-  await vscode.window.showTextDocument(document)
-
-  let activeEditor = vscode.window.activeTextEditor
-
-  if (activeEditor) {
-    const symbolPosition = new vscode.Position(2, 0)
-    activeEditor.selection = new vscode.Selection(symbolPosition, symbolPosition)
-  }
-
-  await waitForSelectionChange({ timeoutInMilliseconds: 1000 })
   await vscode.commands.executeCommand('editor.action.revealDefinition')
 
   activeEditor = vscode.window.activeTextEditor
@@ -41,19 +31,12 @@ test('find definition of local Symbol', async () => {
 })
 
 test('should hover info', async () => {
-  const entryUri = vscode.Uri.file(path.join(__dirnameProxy, 'entry.js'))
+  await loadExtensionCase('entry.js')
 
-  for (const d of vscode.workspace.textDocuments) {
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
-  }
-
-  const document = await vscode.workspace.openTextDocument(entryUri)
-  await vscode.window.showTextDocument(document)
-
-  const hover = (await vscode.commands.executeCommand(
+  let hover = (await vscode.commands.executeCommand(
     'vscode.executeHoverProvider',
     vscode.window.activeTextEditor?.document.uri,
-    new vscode.Position(2, 0)
+    new vscode.Position(2, 12)
   )) as vscode.Hover[]
 
   let hasValidHoverInfo = false
@@ -62,25 +45,29 @@ test('should hover info', async () => {
     for (const s of c.contents as unknown as vscode.MarkdownString[])
       if (/function sum/gm.test(s.value)) hasValidHoverInfo = true
 
-  assert.equal(hasValidHoverInfo, true)
+  assert.equal(hasValidHoverInfo, true, 'resolve symbol declaration')
+
+  hasValidHoverInfo = false
+
+  hover = (await vscode.commands.executeCommand(
+    'vscode.executeHoverProvider',
+    vscode.window.activeTextEditor?.document.uri,
+    new vscode.Position(2, 6)
+  )) as vscode.Hover[]
+
+  for (const c of hover)
+    for (const s of c.contents as unknown as vscode.MarkdownString[])
+      if (/number/gm.test(s.value)) hasValidHoverInfo = true
+
+  assert.equal(hasValidHoverInfo, true, 'resolve returned type of assignment expression')
 })
 
 test('find definition of global Symbol', async () => {
-  const entryUri = vscode.Uri.file(path.join(__dirnameProxy, 'entry.js'))
-
-  for (const d of vscode.workspace.textDocuments) {
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
-  }
-
-  const document = await vscode.workspace.openTextDocument(entryUri)
-  await vscode.window.showTextDocument(document)
-
-  let activeEditor = vscode.window.activeTextEditor
-
-  if (activeEditor) {
-    const symbolPosition = new vscode.Position(4, 5)
-    activeEditor.selection = new vscode.Selection(symbolPosition, symbolPosition)
-  }
+  let activeEditor: vscode.TextEditor | undefined = await loadExtensionCase('entry.js')
+  activeEditor.selection = new vscode.Selection(
+    new vscode.Position(4, 5),
+    new vscode.Position(4, 5)
+  )
 
   await vscode.commands.executeCommand('editor.action.revealDefinition')
 
@@ -100,16 +87,8 @@ test('find definition of global Symbol', async () => {
 })
 
 test('should get references', async () => {
-  const entryUri = vscode.Uri.file(path.join(__dirnameProxy, 'entry.js'))
+  await loadExtensionCase('entry.js')
 
-  for (const d of vscode.workspace.textDocuments) {
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
-  }
-
-  const document = await vscode.workspace.openTextDocument(entryUri)
-  await vscode.window.showTextDocument(document)
-
-  await waitForSelectionChange({ timeoutInMilliseconds: 200 })
   const refs = (await vscode.commands.executeCommand(
     'vscode.executeReferenceProvider',
     vscode.window.activeTextEditor?.document.uri,
@@ -154,24 +133,14 @@ test('should get references', async () => {
 })
 
 test('find definition of library Symbol', async () => {
-  const entryUri = vscode.Uri.file(path.join(__dirnameProxy, 'entry.js'))
+  let activeEditor: vscode.TextEditor | undefined = await loadExtensionCase('entry.js')
 
-  for (const d of vscode.workspace.textDocuments) {
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
-  }
-
-  const document = await vscode.workspace.openTextDocument(entryUri)
-  await vscode.window.showTextDocument(document)
-
-  let activeEditor = vscode.window.activeTextEditor
-
-  if (activeEditor) {
-    const symbolPosition = new vscode.Position(5, 20)
-    activeEditor.selection = new vscode.Selection(symbolPosition, symbolPosition)
-  }
+  activeEditor.selection = new vscode.Selection(
+    new vscode.Position(5, 20),
+    new vscode.Position(5, 20)
+  )
 
   await vscode.commands.executeCommand('editor.action.revealDefinition')
-
   activeEditor = vscode.window.activeTextEditor
 
   assert.equal(
@@ -188,27 +157,8 @@ test('find definition of library Symbol', async () => {
 })
 
 test('format document with wgl syntax', async () => {
-  const unformattedUri = vscode.Uri.file(
-    path.join(__dirnameProxy, 'formatting', 'wgl-syntax-compatibility.js')
-  )
-
-  for (const d of vscode.workspace.textDocuments) {
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
-  }
-
-  const document = await vscode.workspace.openTextDocument(unformattedUri)
-  await vscode.window.showTextDocument(document)
-
-  let activeEditor = vscode.window.activeTextEditor
-
-  if (activeEditor) {
-    const symbolPosition = new vscode.Position(5, 10)
-    activeEditor.selection = new vscode.Selection(symbolPosition, symbolPosition)
-  }
-
+  const activeEditor = await loadExtensionCase('formatting\\wgl-syntax-compatibility.js')
   await vscode.commands.executeCommand('editor.action.formatDocument')
-
-  activeEditor = vscode.window.activeTextEditor
 
   assert.equal(
     activeEditor?.document.getText() || '',
@@ -233,25 +183,8 @@ test('format document with wgl syntax', async () => {
 })
 
 test('format document with eof', async () => {
-  const unformattedUri = vscode.Uri.file(path.join(__dirnameProxy, 'formatting', 'eof.js'))
-
-  for (const d of vscode.workspace.textDocuments) {
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
-  }
-
-  const document = await vscode.workspace.openTextDocument(unformattedUri)
-  await vscode.window.showTextDocument(document)
-
-  let activeEditor = vscode.window.activeTextEditor
-
-  if (activeEditor) {
-    const symbolPosition = new vscode.Position(5, 10)
-    activeEditor.selection = new vscode.Selection(symbolPosition, symbolPosition)
-  }
-
+  const activeEditor = await loadExtensionCase('formatting\\eof.js')
   await vscode.commands.executeCommand('editor.action.formatDocument')
-
-  activeEditor = vscode.window.activeTextEditor
 
   assert.equal(
     activeEditor?.document.getText() || '',
@@ -261,25 +194,8 @@ test('format document with eof', async () => {
 })
 
 test('format document with missing eof', async () => {
-  const unformattedUri = vscode.Uri.file(path.join(__dirnameProxy, 'formatting', 'missing-eof.js'))
-
-  for (const d of vscode.workspace.textDocuments) {
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
-  }
-
-  const document = await vscode.workspace.openTextDocument(unformattedUri)
-  await vscode.window.showTextDocument(document)
-
-  let activeEditor = vscode.window.activeTextEditor
-
-  if (activeEditor) {
-    const symbolPosition = new vscode.Position(5, 10)
-    activeEditor.selection = new vscode.Selection(symbolPosition, symbolPosition)
-  }
-
+  const activeEditor = await loadExtensionCase('formatting\\missing-eof.js')
   await vscode.commands.executeCommand('editor.action.formatDocument')
-
-  activeEditor = vscode.window.activeTextEditor
 
   assert.equal(
     activeEditor?.document.getText() || '',
@@ -289,27 +205,8 @@ test('format document with missing eof', async () => {
 })
 
 test('format document with with region example in other region', async () => {
-  const unformattedUri = vscode.Uri.file(
-    path.join(__dirnameProxy, 'formatting', 'region-in-region.js')
-  )
-
-  for (const d of vscode.workspace.textDocuments) {
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
-  }
-
-  const document = await vscode.workspace.openTextDocument(unformattedUri)
-  await vscode.window.showTextDocument(document)
-
-  let activeEditor = vscode.window.activeTextEditor
-
-  if (activeEditor) {
-    const symbolPosition = new vscode.Position(5, 10)
-    activeEditor.selection = new vscode.Selection(symbolPosition, symbolPosition)
-  }
-
+  const activeEditor = await loadExtensionCase('formatting\\region-in-region.js')
   await vscode.commands.executeCommand('editor.action.formatDocument')
-
-  activeEditor = vscode.window.activeTextEditor
 
   assert.equal(
     activeEditor?.document.getText() || '',
@@ -332,19 +229,7 @@ test('format document with with region example in other region', async () => {
 })
 
 test('should do completion', async () => {
-  const entryUri = vscode.Uri.file(path.join(__dirnameProxy, 'entry.js'))
-
-  for (const d of vscode.workspace.textDocuments) {
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
-  }
-
-  const document = await vscode.workspace.openTextDocument(entryUri)
-  await vscode.window.showTextDocument(document)
-
-  const activeEditor = vscode.window.activeTextEditor
-
-  if (!activeEditor) return
-
+  const activeEditor: vscode.TextEditor = await loadExtensionCase('entry.js')
   const actualCompletionList = (await vscode.commands.executeCommand(
     'vscode.executeCompletionItemProvider',
     activeEditor.document.uri,
@@ -371,26 +256,9 @@ test('should do completion', async () => {
 })
 
 test('should get diagnostics', async () => {
-  const entryUri = vscode.Uri.file(path.join(__dirnameProxy, 'entry.js'))
-
-  for (const d of vscode.workspace.textDocuments) {
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
-  }
-
-  await waitForSelectionChange({ timeoutInMilliseconds: 1500 })
-
-  const document = await vscode.workspace.openTextDocument(entryUri)
-  await vscode.window.showTextDocument(document)
-
-  await waitForSelectionChange({ timeoutInMilliseconds: 1500 })
-
-  if (!vscode.window.activeTextEditor) return
-
-  const actualDiagnostics = vscode.languages.getDiagnostics(
-    vscode.window.activeTextEditor.document.uri
-  )
-
-  actualDiagnostics
+  const activeEditor = await loadExtensionCase('entry.js')
+  const actualDiagnostics = vscode.languages.getDiagnostics(activeEditor.document.uri)
+  await new Promise(r => setTimeout(r, 200))
 
   assert.equal(
     actualDiagnostics.some(d => d.source === 'WGLScript'),
@@ -406,21 +274,12 @@ test('should get diagnostics', async () => {
 })
 
 test('should resolve module', async () => {
-  const entryUri = vscode.Uri.file(path.join(__dirnameProxy, 'entry.js'))
+  let activeEditor: vscode.TextEditor | undefined = await loadExtensionCase('entry.js')
 
-  for (const d of vscode.workspace.textDocuments) {
-    await vscode.commands.executeCommand('workbench.action.closeActiveEditor', d.uri)
-  }
-
-  const document = await vscode.workspace.openTextDocument(entryUri)
-  await vscode.window.showTextDocument(document)
-
-  let activeEditor = vscode.window.activeTextEditor
-
-  if (activeEditor) {
-    const symbolPosition = new vscode.Position(0, 12)
-    activeEditor.selection = new vscode.Selection(symbolPosition, symbolPosition)
-  }
+  activeEditor.selection = new vscode.Selection(
+    new vscode.Position(0, 12),
+    new vscode.Position(0, 12)
+  )
 
   await vscode.commands.executeCommand('editor.action.revealDefinition')
 

@@ -230,8 +230,7 @@ async function getQuickInfoAtPosition(
   document: Pick<vscode.TextDocument, 'fileName'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
-  token?: vscode.CancellationToken,
-  searchPatternForTreeShaking?: RegExp | string
+  token?: vscode.CancellationToken
 ): Promise<vscode.MarkdownString[]> {
   const consumer = async ({ bundlePosition, env }: utils.IConsumerProps) => {
     if (
@@ -260,12 +259,7 @@ async function getQuickInfoAtPosition(
     position,
     projectRoot,
     consumer,
-    token,
-    compileOptions: {
-      treeShaking: searchPatternForTreeShaking
-        ? { searchPattern: searchPatternForTreeShaking }
-        : undefined
-    }
+    token
   })
 
   if (QI === undefined) return []

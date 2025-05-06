@@ -254,22 +254,12 @@ export function activate(context: vscode.ExtensionContext) {
 
           if (wsPath === undefined) return
 
-          const wordPos = document.getWordRangeAtPosition(position)
-          let word = ''
-          if (wordPos && wordPos.start.line === wordPos.end.line) {
-            word = document
-              .lineAt(wordPos.start.line)
-              .text.slice(wordPos.start.character, wordPos.end.character)
-          }
-          const pattern = new RegExp(`[^a-zA-Z0-9$_]${word}[^a-zA-Z0-9$_]`, 'm')
-
           try {
             const quickInfo = await intellisense.getQuickInfoAtPosition(
               { fileName: document.fileName },
               position,
               wsPath,
-              token,
-              pattern
+              token
             )
 
             return { contents: quickInfo }
