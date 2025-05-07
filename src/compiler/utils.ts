@@ -129,7 +129,7 @@ export async function attachGlobalScript(
 
   let globalScriptSN: sm.SourceNode
 
-  if (gls.code === '' || opt.treeShaking?.searchPattern) {
+  if (gls.code === '' || gls.sourcemap === '' || opt.treeShaking?.searchPattern) {
     globalScriptSN = await compile(globalScript, opt)
     const strWSM = globalScriptSN.toStringWithSourceMap()
 
@@ -143,6 +143,12 @@ export async function attachGlobalScript(
   const consumer = await new sm.SourceMapConsumer(gls.sourcemap)
   globalScriptSN = sm.SourceNode.fromStringWithSourceMap(gls.code, consumer)
   consumer.destroy()
+
+  if (opt.treeShaking?.searchPattern !== undefined) {
+    gls.code = ''
+    gls.sourcemap = ''
+    gls.modules = new Map()
+  }
 
   chunks.push(
     new sm.SourceNode(null, null, fileN.toLowerCase(), [

@@ -137,9 +137,10 @@ async function getDefinitionInfoAtPosition(
 }
 
 async function getCompletionsAtPosition(
-  document: Pick<vscode.TextDocument, 'fileName'>,
+  document: Pick<vscode.TextDocument, 'fileName' | 'lineAt'>,
   position: Pick<vscode.Position, 'line' | 'character'>,
   projectRoot: string,
+  resolveDependencies: boolean,
   token?: vscode.CancellationToken
 ): Promise<vscode.ProviderResult<vscode.CompletionItem[]>> {
   const consumer = async ({ bundlePosition, env }: utils.IConsumerProps) => {
@@ -153,6 +154,18 @@ async function getCompletionsAtPosition(
 
     if (token?.isCancellationRequested) return []
 
+    if (!resolveDependencies) {
+      if (needBundleContextCompletionRequest({ bundlePosition, env, position, document })) {
+        return await getCompletionsAtPosition(
+          document,
+          position,
+          projectRoot,
+          true /** resolveDependencies */,
+          token
+        )
+      }
+    }
+
     const C = libUtils.logtime(
       env.languageService.getCompletionsAtPosition,
       utils.bundle,
@@ -165,18 +178,152 @@ async function getCompletionsAtPosition(
       ts.getDefaultFormatCodeSettings()
     )
 
-    if (C === undefined || !C.entries.length || token?.isCancellationRequested) return []
+    if (token?.isCancellationRequested) return []
 
-    if (token?.isCancellationRequested) []
+    const completions: Pick<ts.CompletionEntry, 'name' | 'sortText' | 'kind'>[] = C ? C.entries : []
 
-    return C.entries.map<vscode.CompletionItem>(({ name: label, sortText, kind }) => ({
+    if (!resolveDependencies)
+      await attachGlobalSymbolsIntoCompletions(document, projectRoot, token, completions)
+
+    const getSortText = await getSortTextCallback(document, position, projectRoot, token)
+
+    return completions.map<vscode.CompletionItem>(({ name: label, sortText, kind }) => ({
       kind: utils.TSElementKindtoVSCodeCompletionItemKind(kind),
-      sortText,
+      sortText: getSortText(label, sortText, kind),
       label
     }))
   }
 
-  return await utils.consumeScriptModule({ document, position, projectRoot, consumer, token })
+  return await utils.consumeScriptModule({
+    document,
+    position,
+    projectRoot,
+    consumer,
+    token,
+    compileOptions: !resolveDependencies
+      ? {
+          skipAttachDependencies: true,
+          skipAttachGlobalScript: true
+        }
+      : {}
+  })
+}
+
+async function attachGlobalSymbolsIntoCompletions(
+  document: Pick<vscode.TextDocument, 'fileName' | 'lineAt'>,
+  projectRoot: string,
+  token: vscode.CancellationToken | undefined,
+  completions: Pick<ts.CompletionEntry, 'name' | 'sortText' | 'kind'>[]
+) {
+  const documentN = cUtils.normalizePath(document.fileName, projectRoot).toLowerCase()
+  const deps = await utils
+    .consumeScriptModule({
+      document,
+      projectRoot,
+      consumer: p => p.map.sources,
+      getTypeScriptEnvironment: false
+    })
+    .then(deps => deps?.filter(d => d !== documentN))
+
+  if (!deps?.every(d => utils.moduleSymbolsRepository.has(d))) {
+    const bundleSymbols = await getNavigationBarItems(document, projectRoot, token, true)
+    if (bundleSymbols) {
+      for (const s of bundleSymbols) {
+        const dependency = cUtils.normalizePath(s.location.uri.fsPath, projectRoot).toLowerCase()
+        const repo = utils.moduleSymbolsRepository.get(dependency)
+        if (!repo)
+          utils.moduleSymbolsRepository.set(dependency, [
+            { name: s.name, kind: s.kind, containerName: s.containerName }
+          ])
+        else repo.push(s)
+      }
+    }
+  }
+
+  if (deps)
+    for (const d of deps) {
+      const repo = utils.moduleSymbolsRepository.get(d)
+      if (!repo) {
+        continue
+      }
+      for (const s of repo)
+        if (
+          s.containerName === '<global>' &&
+          /^[_$a-zA-ZА-Яа-я]+$/.test(s.name) &&
+          !completions.some(
+            c =>
+              c.name === s.name &&
+              c.kind === utils.VSCodeSymbolKindToTSElementKind(s.kind) &&
+              c.sortText === '11'
+          )
+        )
+          completions.push({
+            name: s.name,
+            kind: utils.VSCodeSymbolKindToTSElementKind(s.kind),
+            sortText: '11'
+          })
+    }
+}
+
+// TODO: кейс при запросе ключей в литерале объекта
+function needBundleContextCompletionRequest<T extends Parameters<typeof getCompletionsAtPosition>>(
+  props: { document: T[0]; position: T[1] } & Required<
+    Pick<utils.IConsumerProps, 'env' | 'bundlePosition'>
+  >
+) {
+  let foundNode: ts.Node | undefined
+  const sf = props.env.getSourceFile(utils.bundle) as ts.SourceFile
+  const bundleOffset = ts.getPositionOfLineAndCharacter(
+    sf,
+    (props.bundlePosition.line || 1) - 1,
+    props.position.character
+  )
+
+  const visit = (node: ts.Node): void => {
+    const start = node.getStart()
+    const end = node.getEnd()
+
+    if (start <= bundleOffset && bundleOffset <= end) {
+      foundNode = node
+      ts.forEachChild(node, visit)
+    }
+  }
+  ts.forEachChild(sf, visit)
+  const isDottedCompletionRequest =
+    libUtils.firstNonPatternLeftChar(props.document, props.position, /\s/).char === '.' ||
+    (foundNode?.kind === ts.SyntaxKind.Identifier &&
+      foundNode?.parent &&
+      foundNode?.parent.kind === ts.SyntaxKind.PropertyAccessExpression &&
+      foundNode?.parent.getChildAt(2).getStart() === foundNode.getStart())
+  return isDottedCompletionRequest
+}
+
+async function getSortTextCallback(
+  document: Pick<vscode.TextDocument, 'fileName' | 'lineAt'>,
+  position: Pick<vscode.Position, 'line' | 'character'>,
+  projectRoot: string,
+  token?: vscode.CancellationToken
+) {
+  const localSymbols = await getNavigationBarItems(document, projectRoot, token)
+  const typedPosition = new vscode.Position(position.line, position.character)
+  const contextRanges = localSymbols
+    ?.filter(s => s.location.range.contains(typedPosition))
+    ?.sort((a, b) => (b.location.range.contains(a.location.range) ? -1 : 1))
+    .map((s, i) => ({ ...s, ctx: (-i - 1).toString() }))
+  return (label: string, sortText: string, kind: ts.ScriptElementKind) => {
+    const s = localSymbols?.find(
+      s =>
+        s.name === label &&
+        utils.TSElementKindtoVSCodeSymbolKind(kind) === s.kind &&
+        contextRanges?.some(r => r.location.range.contains(s.location.range))
+    )
+    if (!s) return sortText
+    const r = contextRanges
+      ?.filter(r => r.location.range.contains(s.location.range))
+      .sort((a, b) => (Number(a.ctx) > Number(b.ctx) ? 1 : 0))[0]
+    if (!r) return sortText
+    return r.ctx
+  }
 }
 
 async function getCompletionEntryDetails(
@@ -827,7 +974,8 @@ async function getModuleReferences(
 
   for (const [entry, deps] of moduleReferencesStorage)
     for (const d of deps)
-      if (entry !== d && moduleReferencesStorage.has(d)) moduleReferencesStorage.delete(d)
+      if (entry.toLowerCase() !== d.toLowerCase() && moduleReferencesStorage.has(d))
+        moduleReferencesStorage.delete(d)
 
   for (const [entry, deps] of moduleReferencesStorage)
     if (deps.find(d => d.toLowerCase() === module.toLowerCase())) moduleReferences.push(entry)
@@ -1078,6 +1226,34 @@ async function getFoldingRanges(
   })
 }
 
+async function getBundle(
+  document: Pick<vscode.TextDocument, 'fileName'>,
+  projectRoot: string,
+  position: Pick<vscode.Position, 'line' | 'character'>
+): Promise<[string, sm.Position]> {
+  const consumer = async ({ bundlePosition, bundleContent, map }: utils.IConsumerProps) => {
+    if (bundlePosition.line === null || bundlePosition.column === null)
+      return ['', { line: 1, column: 0 }] as [string, sm.Position]
+
+    const { line, column } = map.generatedPositionFor({
+      source: path.relative(projectRoot, document.fileName).toLowerCase(),
+      line: position.line + 1,
+      column: position.character
+    })
+
+    return [bundleContent, { line: line || 1, column: column || 0 }] as [string, sm.Position]
+  }
+
+  return (
+    (await utils.consumeScriptModule({
+      document,
+      position,
+      projectRoot,
+      consumer
+    })) || (['', { line: 1, column: 0 }] as [string, sm.Position])
+  )
+}
+
 async function getLocalBundle(
   document: Pick<vscode.TextDocument, 'fileName'>,
   projectRoot: string,
@@ -1097,7 +1273,7 @@ async function getLocalBundle(
     .then(async strWSM => {
       const map = await sm.SourceMapConsumer.fromSourceMap(strWSM.map)
       const pos = map.generatedPositionFor({
-        source: path.relative(projectRoot, document.fileName),
+        source: path.relative(projectRoot, document.fileName).toLowerCase(),
         line: position.line + 1,
         column: position.character
       })
@@ -1114,113 +1290,124 @@ async function getModuleInfo(
   document: Pick<vscode.TextDocument, 'fileName'>,
   projectRoot: string
 ): Promise<vscode.ProviderResult<vscode.MarkdownString>> {
-  const info = new vscode.MarkdownString('')
-  const entry = cUtils.normalizePath(document.fileName, projectRoot)
-  const bundleInfo = utils.bundleInfoRepository.get(entry)
+  const consumer = async ({ map }: utils.IConsumerProps) => {
+    const info = new vscode.MarkdownString('')
+    const entry = cUtils.normalizePath(document.fileName, projectRoot)
+    const globalDeps = await utils.getGlobalDeps(projectRoot)
 
-  if (!bundleInfo) return
+    type FileTree = { [key: string]: FileTree }
+    function buildFileTree(paths: string[]): FileTree {
+      const tree: FileTree = {}
 
-  const globalDeps = await utils.getGlobalDeps(projectRoot)
+      paths.map(path => {
+        const parts = path.split('\\')
+        let current: FileTree = tree
 
-  type FileTree = { [key: string]: FileTree }
-  function buildFileTree(paths: string[]): FileTree {
-    const tree: FileTree = {}
+        parts.map(part => {
+          if (!current[part]) {
+            current[part] = {}
+          }
+          current = current[part]
+        })
+      })
 
-    paths.map(path => {
-      const parts = path.split('\\')
-      let current: FileTree = tree
+      return tree
+    }
 
-      parts.map(part => {
-        if (!current[part]) {
-          current[part] = {}
+    /*
+      markdown += `${indent}${isLastItem ? '┗━━📂 ', '┣━━📂 '}${key}\n`
+        `${indent}${isLastItem ? '   ' : '┃  '}`,
+      markdown += `${indent}${isLastItem ? '┗━━🧾 ' : '┣━━🧾 '}${key}\t${fileLink}\n`
+    */
+
+    function generateMarkdown(tree: FileTree, indent: string, context: string): string {
+      let markdown = ''
+
+      const keys = Object.keys(tree).sort() // Сортируем ключи по алфавиту
+      const totalKeys = keys.length
+
+      keys.map((key, index) => {
+        const isDirectory = Object.keys(tree[key]).length > 0
+        const isLastItem = index === totalKeys - 1 // Проверяем, является ли текущий элемент последним
+
+        if (isDirectory) {
+          markdown += `${indent}${isLastItem ? '   - 📂 ' : '   - 📂 '}${key}\n`
+          markdown += generateMarkdown(
+            tree[key],
+            `${indent}${isLastItem ? '   ' : '   '}`,
+            `${context}${key}/`
+          )
+        } else {
+          const fileLink = `[](${context}${key})`
+          markdown += `${indent}${isLastItem ? '   - 🧾 ' : '   - 🧾 '}${key}\t${fileLink}\n`
         }
-        current = current[part]
       })
-    })
 
-    return tree
-  }
+      return markdown
+    }
 
-  /*
-    markdown += `${indent}${isLastItem ? '┗━━📂 ', '┣━━📂 '}${key}\n`
-      `${indent}${isLastItem ? '   ' : '┃  '}`,
-    markdown += `${indent}${isLastItem ? '┗━━🧾 ' : '┣━━🧾 '}${key}\t${fileLink}\n`
-  */
+    function prettifyMarkdownTree(md: string): string {
+      let maxLength = 0
 
-  function generateMarkdown(tree: FileTree, indent: string, context: string): string {
-    let markdown = ''
-
-    const keys = Object.keys(tree).sort() // Сортируем ключи по алфавиту
-    const totalKeys = keys.length
-
-    keys.map((key, index) => {
-      const isDirectory = Object.keys(tree[key]).length > 0
-      const isLastItem = index === totalKeys - 1 // Проверяем, является ли текущий элемент последним
-
-      if (isDirectory) {
-        markdown += `${indent}${isLastItem ? '   - 📂 ' : '   - 📂 '}${key}\n`
-        markdown += generateMarkdown(
-          tree[key],
-          `${indent}${isLastItem ? '   ' : '   '}`,
-          `${context}${key}/`
-        )
-      } else {
-        const fileLink = `[](${context}${key})`
-        markdown += `${indent}${isLastItem ? '   - 🧾 ' : '   - 🧾 '}${key}\t${fileLink}\n`
-      }
-    })
-
-    return markdown
-  }
-
-  function prettifyMarkdownTree(md: string): string {
-    let maxLength = 0
-
-    md.split('\n').map(line => {
-      const parts = line.split('\t')
-      if (parts.length === 2 && maxLength < parts[0].length) maxLength = parts[0].length
-    })
-
-    maxLength++
-
-    return md
-      .split('\n')
-      .map(line => {
+      md.split('\n').map(line => {
         const parts = line.split('\t')
-        if (parts.length !== 2) return line
-
-        return parts[0] + ' '.repeat(maxLength - parts[0].length) + parts[1].trim()
+        if (parts.length === 2 && maxLength < parts[0].length) maxLength = parts[0].length
       })
-      .join('\n')
+
+      maxLength++
+
+      return md
+        .split('\n')
+        .map(line => {
+          const parts = line.split('\t')
+          if (parts.length !== 2) return line
+
+          return parts[0] + ' '.repeat(maxLength - parts[0].length) + parts[1].trim()
+        })
+        .join('\n')
+    }
+
+    let fileTree: FileTree = {}
+
+    info.appendMarkdown('# Module info\n')
+    info.appendMarkdown('\n')
+    info.appendMarkdown('**Entry**\n')
+    info.appendMarkdown(`${entry}\n`)
+    info.appendMarkdown('\n')
+    info.appendMarkdown('## local dependencies \n')
+    info.appendMarkdown('\n')
+
+    fileTree = buildFileTree(
+      map.sources
+        .filter(d => !globalDeps.includes(d) && d !== entry)
+        .map(m => cUtils.normalizePath(libUtils.getRealCasePath(projectRoot, m), projectRoot))
+    )
+    info.appendMarkdown('- 📂 Project\n')
+    info.appendMarkdown(prettifyMarkdownTree(generateMarkdown(fileTree, '', '')))
+    info.appendMarkdown('\n')
+
+    info.appendMarkdown(
+      `## global dependencies (${libUtils.getExtOption<string>('globalScript.path')})\n`
+    )
+    info.appendMarkdown('\n')
+
+    fileTree = buildFileTree(
+      map.sources
+        .filter(d => globalDeps.includes(d))
+        .map(m => cUtils.normalizePath(libUtils.getRealCasePath(projectRoot, m), projectRoot))
+    )
+    info.appendMarkdown('- 📂 Project\n')
+    info.appendMarkdown(prettifyMarkdownTree(generateMarkdown(fileTree, '', '')))
+
+    return info
   }
 
-  let fileTree: FileTree = {}
-
-  info.appendMarkdown('# Module info\n')
-  info.appendMarkdown('\n')
-  info.appendMarkdown('**Entry**\n')
-  info.appendMarkdown(`${entry}\n`)
-  info.appendMarkdown('\n')
-  info.appendMarkdown('## local dependencies \n')
-  info.appendMarkdown('\n')
-
-  fileTree = buildFileTree(
-    bundleInfo.map.sources.filter(d => !globalDeps.includes(d) && d !== entry)
-  )
-  info.appendMarkdown('- 📂 Project\n')
-  info.appendMarkdown(prettifyMarkdownTree(generateMarkdown(fileTree, '', '')))
-  info.appendMarkdown('\n')
-
-  info.appendMarkdown(
-    `## global dependencies (${libUtils.getExtOption<string>('globalScript.path')})\n`
-  )
-  info.appendMarkdown('\n')
-
-  fileTree = buildFileTree(bundleInfo.map.sources.filter(d => globalDeps.includes(d)))
-  info.appendMarkdown('- 📂 Project\n')
-  info.appendMarkdown(prettifyMarkdownTree(generateMarkdown(fileTree, '', '')))
-
-  return info
+  return await utils.consumeScriptModule({
+    document,
+    projectRoot,
+    consumer,
+    getTypeScriptEnvironment: false
+  })
 }
 
 export const intellisense = utils.track({
@@ -1239,5 +1426,6 @@ export const intellisense = utils.track({
   getFoldingRanges,
   getLocalBundle,
   getModuleInfo,
+  getBundle,
   fixLegacySyntaxAction
 })

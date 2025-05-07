@@ -1,4 +1,5 @@
 import * as path from 'path'
+import type * as ts from 'typescript'
 import * as vscode from 'vscode'
 import type * as wgl from './intellisense/wglscript'
 import * as utils from './utils'
@@ -11,6 +12,17 @@ export let diagnosticsCollection: vscode.DiagnosticCollection
 // TODO: разобрать в каких еще фичах можно применить tree shaking
 export function activate(context: vscode.ExtensionContext) {
   console.log('Extension "wgl-toolchain" is now active')
+
+  /**
+   * если при активации расширения был открыт документ,
+   * то комплешн не может поднять {@link ts.NavigationTree символы бандла},
+   * притом что бандл собирается корректно (видно при отладке)
+   */
+  const firstCompletionRequestOnOpenNonDirtyEntryDocument = {
+    executed: false,
+    document: vscode.window.activeTextEditor?.document.fileName,
+    version: vscode.window.activeTextEditor?.document.version
+  }
 
   const wsf = vscode.workspace.workspaceFolders
   if (wsf === undefined) {
@@ -181,7 +193,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
 
           return di.map(d => ({
-            uri: vscode.Uri.file(path.join(wsPath, d.source)),
+            uri: vscode.Uri.file(utils.getRealCasePath(wsPath, d.source)),
             range: new vscode.Range(d.line, d.column, d.line, d.column + d.length)
           }))
         }
@@ -202,10 +214,19 @@ export function activate(context: vscode.ExtensionContext) {
             if (wsPath === undefined) return
 
             try {
+              if (
+                !firstCompletionRequestOnOpenNonDirtyEntryDocument.executed &&
+                firstCompletionRequestOnOpenNonDirtyEntryDocument.document === document.fileName &&
+                firstCompletionRequestOnOpenNonDirtyEntryDocument.version === document.version
+              ) {
+                utils.restartService('cleanCache')
+              }
+
               const completions = await intellisense.getCompletionsAtPosition(
-                { fileName: document.fileName },
+                document,
                 position,
                 wsPath,
+                false /** resolveDependencies */,
                 token
               )
 

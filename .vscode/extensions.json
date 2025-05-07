@@ -1,3 +1,8 @@
 {
-  "recommendations": ["biomejs.biome", "ms-vscode.extension-test-runner", "PeggyJS.peggy-language"]
+  "recommendations": [
+    "biomejs.biome",
+    "ms-vscode.extension-test-runner",
+    "PeggyJS.peggy-language",
+    "MylesMurphy.prettify-ts"
+  ]
 }

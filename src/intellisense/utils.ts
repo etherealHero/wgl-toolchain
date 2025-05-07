@@ -201,6 +201,51 @@ export function TSElementKindtoVSCodeSymbolKind(el: ts.ScriptElementKind): vscod
   }
 }
 
+export function VSCodeSymbolKindToTSElementKind(
+  symbolKind: vscode.SymbolKind
+): ts.ScriptElementKind {
+  switch (symbolKind) {
+    case vscode.SymbolKind.Module:
+      return ts.ScriptElementKind.moduleElement
+    case vscode.SymbolKind.Class:
+      return ts.ScriptElementKind.classElement
+    case vscode.SymbolKind.Interface:
+      return ts.ScriptElementKind.interfaceElement
+    case vscode.SymbolKind.Struct:
+      return ts.ScriptElementKind.typeElement
+    case vscode.SymbolKind.Enum:
+      return ts.ScriptElementKind.enumElement
+    case vscode.SymbolKind.EnumMember:
+      return ts.ScriptElementKind.enumMemberElement
+    case vscode.SymbolKind.Variable:
+      return ts.ScriptElementKind.variableElement
+    case vscode.SymbolKind.Constant:
+      return ts.ScriptElementKind.constElement
+    case vscode.SymbolKind.Function:
+      return ts.ScriptElementKind.functionElement
+    case vscode.SymbolKind.Method:
+      return ts.ScriptElementKind.memberFunctionElement
+    case vscode.SymbolKind.Property:
+      return ts.ScriptElementKind.memberVariableElement
+    case vscode.SymbolKind.Constructor:
+      return ts.ScriptElementKind.constructorImplementationElement
+    case vscode.SymbolKind.Key:
+      return ts.ScriptElementKind.indexSignatureElement
+    case vscode.SymbolKind.TypeParameter:
+      return ts.ScriptElementKind.typeParameterElement
+    case vscode.SymbolKind.String:
+      return ts.ScriptElementKind.string
+    case vscode.SymbolKind.Object:
+      return ts.ScriptElementKind.label
+    case vscode.SymbolKind.Namespace:
+      return ts.ScriptElementKind.alias
+    case vscode.SymbolKind.Package:
+      return ts.ScriptElementKind.directory
+    default:
+      return ts.ScriptElementKind.unknown
+  }
+}
+
 export function TSOutliningSpanKindToVSCodeSymbolKind(
   el: ts.OutliningSpanKind
 ): vscode.FoldingRangeKind | undefined {
@@ -281,7 +326,6 @@ export function chunkedArray<T>(arr: Array<T>, chunkSize: number) {
 
 interface IBundleInfo {
   bundleContent: string
-  dependencies: cUtils.TNormalizedPath[]
   entryContent: string
   entryAst: AST<TNode>
   map: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer
@@ -330,7 +374,13 @@ interface IConsumeScriptModuleProps<T> {
   source?: cUtils.TNormalizedPath
 
   compileOptions?: Partial<
-    Pick<cUtils.CompileOptions, 'treeShaking' | 'skipAttachDependencies' | 'skipAttachGlobalScript'>
+    Pick<
+      cUtils.CompileOptions,
+      | 'treeShaking'
+      | 'skipAttachDependencies'
+      | 'skipAttachGlobalScript'
+      | 'skipAttachNonImportStatements'
+    >
   >
 }
 
@@ -433,7 +483,6 @@ export async function consumeScriptModule<T>(
 
     if (isNeedCacheBundleInfo) {
       bundleInfoRepository.set(entry, {
-        dependencies: map.sources,
         bundleContent,
         entryContent,
         entryAst,
@@ -451,6 +500,11 @@ export async function consumeScriptModule<T>(
 
   return resolve
 }
+
+export const moduleSymbolsRepository = new Map<
+  cUtils.TNormalizedPath,
+  Pick<vscode.SymbolInformation, 'name' | 'kind' | 'containerName'>[]
+>()
 
 export function track<T extends object>(obj: T) {
   const methodHandler = {
@@ -486,7 +540,7 @@ export function track<T extends object>(obj: T) {
         return new Proxy(originalProperty, methodHandler)
       }
 
-      console.log(`Property "${String(prop)}" was read with value: ${originalProperty}`)
+      // console.log(`Property "${String(prop)}" was read with value: ${originalProperty}`)
 
       return originalProperty
     }

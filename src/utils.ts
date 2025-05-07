@@ -3,9 +3,9 @@ import * as path from 'path'
 import * as vscode from 'vscode'
 import * as compilerUtils from './compiler/utils'
 import * as ext from './extension'
+import * as utils from './intellisense/utils'
 
 import { intellisense } from './intellisense/features'
-import { bundleInfoRepository } from './intellisense/utils'
 
 export const getExtOption = <T>(option: string): T =>
   vscode.workspace.getConfiguration('wglscript').get(option) as T
@@ -54,9 +54,10 @@ export const restartService = (behaviour?: 'cleanCache' | 'restartExtensionHost'
 
     if (exceptionBehaviour === 'cleanCache') {
       ext.diagnosticsCollection.clear()
-      bundleInfoRepository.clear()
-      compilerUtils.astStorage.clear()
+      utils.bundleInfoRepository.clear()
+      utils.moduleSymbolsRepository.clear()
 
+      compilerUtils.astStorage.clear()
       compilerUtils.gls.code = ''
       compilerUtils.gls.sourcemap = ''
       compilerUtils.gls.modules = new Map()
@@ -89,22 +90,16 @@ export async function showBundle() {
 
   if (!wsPath) return
 
-  const bundleInfo = bundleInfoRepository.get(
-    compilerUtils.normalizePath(activeTE.document.fileName, wsPath)
+  const [bundle, bundlePosition] = await intellisense.getBundle(
+    activeTE.document,
+    wsPath,
+    activeTE.selection.active
   )
 
-  if (!bundleInfo) return
-
-  const bundlePosition = bundleInfo.map.generatedPositionFor({
-    source: compilerUtils.normalizePath(activeTE.document.fileName, wsPath),
-    line: activeTE.selection.active.line + 1,
-    column: activeTE.selection.active.character
-  })
-
-  if (!bundlePosition || bundlePosition.line == null || bundlePosition.column == null) return
+  if (!bundle) return
 
   const newDocument = await vscode.workspace.openTextDocument({
-    content: bundleInfo.bundleContent,
+    content: bundle,
     language: 'javascript'
   })
 
@@ -290,19 +285,24 @@ export function didChangeTextDocumentHandler({
     intellisense.modulesWithError.delete(normalized)
   }
 
-  for (const [entry, info] of bundleInfoRepository) {
-    if (info.dependencies.find(d => d === normalized)) {
+  for (const [entry, info] of utils.bundleInfoRepository) {
+    if (info.map.sources.find(d => d === normalized.toLowerCase())) {
       // exit not implemented in tsvfs
       // if (info.env) info.env.sys.exit(0)
-      bundleInfoRepository.delete(entry)
+      utils.bundleInfoRepository.delete(entry)
     }
   }
 
   for (const [entry, deps] of intellisense.moduleReferencesStorage)
-    if (deps.find(d => d === normalized)) intellisense.moduleReferencesStorage.delete(entry)
+    if (deps.find(d => d === normalized.toLowerCase()))
+      intellisense.moduleReferencesStorage.delete(entry)
 
   if (compilerUtils.astStorage.has(normalized)) {
     compilerUtils.astStorage.delete(normalized)
+  }
+
+  if (utils.moduleSymbolsRepository.has(normalized.toLowerCase())) {
+    utils.moduleSymbolsRepository.delete(normalized.toLowerCase())
   }
 
   if (compilerUtils.gls.code !== '') {
@@ -363,4 +363,29 @@ export function getRealCasePath(projectRoot: string, module: string): string {
   }
 
   return currentPath
+}
+
+export function firstNonPatternLeftChar(
+  document: Pick<vscode.TextDocument, 'lineAt'>,
+  position: Pick<vscode.Position, 'line' | 'character'>,
+  pattern: RegExp
+): { char: string; pos: vscode.Position } | { char: undefined; pos: undefined } {
+  let currentLine = position.line
+  let currentChar = position.character - 1
+
+  while (currentLine >= 0) {
+    const lineText = document.lineAt(currentLine).text
+
+    while (currentChar >= 0) {
+      const char = lineText[currentChar]
+      if (char && !pattern.test(char))
+        return { char, pos: new vscode.Position(currentLine, currentChar) }
+      currentChar--
+    }
+
+    currentLine--
+    if (currentLine >= 0) currentChar = document.lineAt(currentLine).text.length - 1
+  }
+
+  return { char: undefined, pos: undefined }
 }
