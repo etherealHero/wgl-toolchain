@@ -4,12 +4,12 @@ import * as vscode from 'vscode'
 import type * as wgl from './intellisense/wglscript'
 import * as utils from './utils'
 
+import { getDocumentContent } from './compiler/utils'
 import { intellisense } from './intellisense/features'
 
 export let diagnosticsCollection: vscode.DiagnosticCollection
 
 // TODO: активация только на WGLProject
-// TODO: разобрать в каких еще фичах можно применить tree shaking
 export function activate(context: vscode.ExtensionContext) {
   console.log('Extension "wgl-toolchain" is now active')
 
@@ -97,7 +97,6 @@ export function activate(context: vscode.ExtensionContext) {
         const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
         if (!wsPath) return
         await new Promise(r => setTimeout(r, 1000))
-        // TODO: мб теряется обновление диагностик при обновлении зависимотей
         if (vscode.window.activeTextEditor?.document.version !== e.document.version) return
 
         const diagnostics = await intellisense.getDiagnostics(
@@ -106,7 +105,6 @@ export function activate(context: vscode.ExtensionContext) {
         )
 
         if (!diagnostics) return
-        // TODO: мб теряется обновление диагностик при обновлении зависимотей
         if (vscode.window.activeTextEditor?.document.version !== e.document.version) return
 
         diagnosticsCollection.clear()
@@ -220,6 +218,7 @@ export function activate(context: vscode.ExtensionContext) {
                 firstCompletionRequestOnOpenNonDirtyEntryDocument.version === document.version
               ) {
                 utils.restartService('cleanCache')
+                firstCompletionRequestOnOpenNonDirtyEntryDocument.executed = true
               }
 
               const completions = await intellisense.getCompletionsAtPosition(
@@ -237,8 +236,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
           },
           resolveCompletionItem: async (item, token) => {
-            if (!vscode.window.activeTextEditor || vscode.window.activeTextEditor.document.isDirty)
-              return
+            if (!vscode.window.activeTextEditor) return
 
             const document = vscode.window.activeTextEditor.document
             const position = vscode.window.activeTextEditor.selection.active
@@ -503,7 +501,6 @@ export function activate(context: vscode.ExtensionContext) {
         provideWorkspaceSymbols: async (_query, token) => {
           const editor = vscode.window.activeTextEditor
           if (!editor) {
-            // TODO: потом переделать под глобальные символы
             return [
               new vscode.SymbolInformation(
                 'You need to open any WGLScript file to resolve workspace symbols',
@@ -519,12 +516,38 @@ export function activate(context: vscode.ExtensionContext) {
           if (wsPath === undefined) return
 
           try {
-            return await intellisense.getNavigationBarItems(
+            let symbols = await intellisense.getNavigationBarItems(
               { fileName: editor.document.fileName },
               wsPath,
               token,
               true /** includeWorkspaceSymbols */
             )
+
+            if (
+              symbols?.some(s => /^\d+$/.test(s.name)) ||
+              symbols
+                ?.filter(
+                  s =>
+                    s.location.uri.fsPath.toLowerCase() !== editor.document.fileName.toLowerCase()
+                )
+                .slice(0, 5)
+                .some(async s => {
+                  const content = await getDocumentContent(s.location.uri.fsPath, wsPath)
+                  const line = content?.split('\n')[s.location.range.start.line] || ''
+                  if (!new RegExp(s.name).test(line)) return true
+                })
+            ) {
+              utils.restartService('cleanCache')
+
+              symbols = await intellisense.getNavigationBarItems(
+                { fileName: editor.document.fileName },
+                wsPath,
+                token,
+                true /** includeWorkspaceSymbols */
+              )
+            }
+
+            return symbols
           } catch (error) {
             console.log(`ERROR: ${error}`)
             utils.restartService()
@@ -587,6 +610,31 @@ export function activate(context: vscode.ExtensionContext) {
     utils.getExtOption<'enabled' | 'disabled'>('intellisense.features.codeActions') === 'enabled'
   ) {
     context.subscriptions.push(
+      vscode.commands.registerCommand(
+        'wglscript.wglToEsRefactor',
+        async (document: vscode.TextDocument) => {
+          const editor = vscode.window.activeTextEditor
+          const projectRoot = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
+          if (!editor || editor.document.uri !== document.uri || !projectRoot) return
+
+          try {
+            const edit = await intellisense.fixLegacySyntaxAction(
+              document,
+              projectRoot,
+              document.positionAt(document.getText().length - 1),
+              new vscode.CancellationTokenSource().token
+            )
+
+            if (edit) {
+              const wsEdit = new vscode.WorkspaceEdit()
+              wsEdit.replace(document.uri, edit.range, edit.newText)
+              await vscode.workspace.applyEdit(wsEdit)
+            }
+          } catch (error) {
+            vscode.window.showErrorMessage(`Refactor failed: ${error}`)
+          }
+        }
+      ),
       vscode.languages.registerCodeActionsProvider(['javascript'], {
         provideCodeActions: async (document, range, context, token) => {
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
@@ -595,22 +643,19 @@ export function activate(context: vscode.ExtensionContext) {
           if (context.triggerKind === vscode.CodeActionTriggerKind.Automatic) return null
 
           const action = new vscode.CodeAction('WGL to ES syntax', vscode.CodeActionKind.Refactor)
-          const endPos = document.positionAt(document.getText().length - 1)
 
           try {
-            const edit = await intellisense.fixLegacySyntaxAction(document, wsPath, endPos, token)
-            const wsEdit = new vscode.WorkspaceEdit()
-
-            if (!edit) return null
-
-            wsEdit.replace(document.uri, edit.range, edit.newText)
-            action.edit = wsEdit
+            action.command = {
+              command: 'wglscript.wglToEsRefactor',
+              title: 'Convert WGL to ES',
+              arguments: [document]
+            }
 
             return [action]
           } catch (error) {
             console.log(`ERROR: ${error}`)
-            vscode.window.showErrorMessage(`WGLFormatter ${error}`)
-            utils.restartService()
+            vscode.window.showErrorMessage(`ERROR ${error}`)
+            // utils.restartService()
           }
         }
       })

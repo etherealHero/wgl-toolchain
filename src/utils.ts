@@ -343,7 +343,10 @@ export function didChangeTextDocumentHandler({
   }
 }
 
-export function getRealCasePath(projectRoot: string, module: string): string {
+export function getRealCasePath(
+  projectRoot: string,
+  module: compilerUtils.TNormalizedPath | string
+): string {
   const absolutePath = path.join(projectRoot, module)
   const parts = module.split(path.sep).filter(part => part.length > 0)
   let currentPath = projectRoot

@@ -120,7 +120,7 @@ export async function attachGlobalScript(
   const fileN = normalizePath(file, opt.projectRoot)
 
   if (!fs.existsSync(globalScript)) {
-    console.log(`ERROR: Global script module ${globalScriptN} not exists`)
+    // console.log(`ERROR: Global script module ${globalScriptN} not exists`)
     return
   }
 

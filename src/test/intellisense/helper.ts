@@ -2,6 +2,7 @@ import * as path from 'path'
 import * as vscode from 'vscode'
 
 import { compile } from '../../compiler/compiler'
+import { astStorage, normalizePath, parse } from '../../compiler/utils'
 import { bundleInfoRepository } from '../../intellisense/utils'
 
 export const __dirnameProxy = __dirname.replace(/([\\\/]+)out([\\\/]+)/, '$1src$2')
@@ -41,5 +42,19 @@ async function waitForLoadExtensionContext() {
   if (!bundleInfoRepository.size) {
     await new Promise(r => setTimeout(r, 10))
     await waitForLoadExtensionContext()
+  }
+}
+
+export type Maybe<T> = T | undefined
+export const projectRoot = 'c:\\root'
+
+export function attachFS(fs: Map<string, string>) {
+  astStorage.clear()
+  for (const [fsPath, content] of fs) {
+    const fileN = normalizePath(fsPath, projectRoot)
+    const ast = parse(content)
+    const astStack = []
+    for (const i in ast) astStack.push({ order: Number(i), n: ast[Number(i)] })
+    astStorage.set(fileN, astStack)
   }
 }

@@ -41,7 +41,7 @@ export interface ImportNode extends Node {
  */
 export interface RegionNode extends Node {
   type: 'region'
-  kind: 'multiLineComment' | 'backticksStringLiteral' | 'text' | 'sql'
+  kind: 'multiLineComment' | 'backticksStringLit' | 'text' | 'sql'
   /** body contains start and end of region (#text, `, /*, *\/ etc.) */
   body: RegionLineNode[]
 }
@@ -77,7 +77,7 @@ export async function compile(file: string, opt: utils.CompileOptions): Promise<
   if (!opt.skipAttachGlobalScript) await utils.attachGlobalScript(file, opt, chunks)
 
   // TODO: конкатенированный файл прицепляется в продолжение последней строки и character offset некоректный
-  // TODO: но теперь quickInfo - Hover ломается, скорее всего вовремя не обновляется контекст
+  // но теперь quickInfo - Hover ломается, скорее всего вовремя не обновляется контекст
   // if (ast.at(-1)?.type === 'breakLine') ast.pop() // remove EOF
 
   for (const n of ast) {

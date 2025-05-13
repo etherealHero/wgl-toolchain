@@ -3,6 +3,7 @@
     "biomejs.biome",
     "ms-vscode.extension-test-runner",
     "PeggyJS.peggy-language",
-    "MylesMurphy.prettify-ts"
+    "MylesMurphy.prettify-ts",
+    "Tobermory.es6-string-html"
   ]
 }

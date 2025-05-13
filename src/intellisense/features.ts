@@ -226,18 +226,7 @@ async function attachGlobalSymbolsIntoCompletions(
     .then(deps => deps?.filter(d => d !== documentN))
 
   if (!deps?.every(d => utils.moduleSymbolsRepository.has(d))) {
-    const bundleSymbols = await getNavigationBarItems(document, projectRoot, token, true)
-    if (bundleSymbols) {
-      for (const s of bundleSymbols) {
-        const dependency = cUtils.normalizePath(s.location.uri.fsPath, projectRoot).toLowerCase()
-        const repo = utils.moduleSymbolsRepository.get(dependency)
-        if (!repo)
-          utils.moduleSymbolsRepository.set(dependency, [
-            { name: s.name, kind: s.kind, containerName: s.containerName }
-          ])
-        else repo.push(s)
-      }
-    }
+    await getNavigationBarItems(document, projectRoot, token, true)
   }
 
   if (deps)
@@ -265,7 +254,6 @@ async function attachGlobalSymbolsIntoCompletions(
     }
 }
 
-// TODO: кейс при запросе ключей в литерале объекта
 function needBundleContextCompletionRequest<T extends Parameters<typeof getCompletionsAtPosition>>(
   props: { document: T[0]; position: T[1] } & Required<
     Pick<utils.IConsumerProps, 'env' | 'bundlePosition'>
@@ -279,23 +267,40 @@ function needBundleContextCompletionRequest<T extends Parameters<typeof getCompl
     props.position.character
   )
 
+  let isInCallExpressionObjectLiteral = false
+
   const visit = (node: ts.Node): void => {
     const start = node.getStart()
     const end = node.getEnd()
 
     if (start <= bundleOffset && bundleOffset <= end) {
       foundNode = node
+
+      if (node.kind === ts.SyntaxKind.ObjectLiteralExpression) {
+        let parent = node.parent
+        while (parent) {
+          if (parent.kind === ts.SyntaxKind.CallExpression) {
+            isInCallExpressionObjectLiteral = true
+            break
+          }
+          parent = parent.parent
+        }
+      }
+
       ts.forEachChild(node, visit)
     }
   }
+
   ts.forEachChild(sf, visit)
+
   const isDottedCompletionRequest =
     libUtils.firstNonPatternLeftChar(props.document, props.position, /\s/).char === '.' ||
     (foundNode?.kind === ts.SyntaxKind.Identifier &&
       foundNode?.parent &&
       foundNode?.parent.kind === ts.SyntaxKind.PropertyAccessExpression &&
       foundNode?.parent.getChildAt(2).getStart() === foundNode.getStart())
-  return isDottedCompletionRequest
+
+  return isDottedCompletionRequest || isInCallExpressionObjectLiteral
 }
 
 async function getSortTextCallback(
@@ -427,32 +432,82 @@ async function getSignatureHelpItems(
   token?: vscode.CancellationToken
   // TODO: все фичи привести к одному АПИ
 ): Promise<vscode.ProviderResult<vscode.SignatureHelp>> {
-  const consumer = async ({ bundlePosition, env }: utils.IConsumerProps) => {
-    if (
-      bundlePosition.line == null ||
-      bundlePosition.column == null ||
-      token?.isCancellationRequested ||
-      !env
-    )
-      return
+  const functionName = await utils.consumeScriptModule({
+    token,
+    document,
+    position,
+    projectRoot,
+    cacheTypeScriptEnvironment: false,
+    compileOptions: { skipAttachDependencies: true, skipAttachGlobalScript: true },
+    consumer(props) {
+      if (!props.env) return
 
-    if (token?.isCancellationRequested) return
-
-    return libUtils.logtime(
-      env.languageService.getSignatureHelpItems,
-      utils.bundle,
-      ts.getPositionOfLineAndCharacter(
-        env.getSourceFile(utils.bundle) as ts.SourceFileLike,
-        bundlePosition.line - 1,
+      const sf = props.env.getSourceFile(utils.bundle) as ts.SourceFile
+      const bundleOffset = ts.getPositionOfLineAndCharacter(
+        sf,
+        (props.bundlePosition.line || 1) - 1,
         position.character
-      ),
-      {
-        triggerReason: { kind: 'retrigger' }
-      }
-    )
-  }
+      )
 
-  const H = await utils.consumeScriptModule({ document, position, projectRoot, consumer, token })
+      let callExpr: ts.CallExpression | undefined
+      const visit = (node: ts.Node): void => {
+        if (node.getStart() <= bundleOffset && node.getEnd() >= bundleOffset) {
+          if (ts.isCallExpression(node)) {
+            callExpr = node
+          }
+          ts.forEachChild(node, visit)
+        }
+      }
+      ts.forEachChild(sf, visit)
+
+      if (!callExpr) return
+
+      let functionName: string | undefined
+      const expression = callExpr.expression
+
+      if (ts.isIdentifier(expression)) {
+        functionName = expression.text
+      } else if (ts.isPropertyAccessExpression(expression)) {
+        functionName = expression.name.text
+      } else if (ts.isElementAccessExpression(expression)) {
+        return
+      }
+
+      return new RegExp(`[^a-zA-Z0-9$_]${functionName}[^a-zA-Z0-9$_]`, 'm')
+    }
+  })
+
+  const H = await utils.consumeScriptModule({
+    token,
+    document,
+    position,
+    projectRoot,
+    compileOptions: functionName ? { treeShaking: { searchPattern: functionName } } : undefined,
+    consumer: async ({ bundlePosition, env }: utils.IConsumerProps) => {
+      if (
+        bundlePosition.line == null ||
+        bundlePosition.column == null ||
+        token?.isCancellationRequested ||
+        !env
+      )
+        return
+
+      if (token?.isCancellationRequested) return
+
+      return libUtils.logtime(
+        env.languageService.getSignatureHelpItems,
+        utils.bundle,
+        ts.getPositionOfLineAndCharacter(
+          env.getSourceFile(utils.bundle) as ts.SourceFileLike,
+          bundlePosition.line - 1,
+          position.character
+        ),
+        {
+          triggerReason: { kind: 'retrigger' }
+        }
+      )
+    }
+  })
 
   if (H === undefined || !H.items.length) return
 
@@ -571,10 +626,45 @@ async function getNavigationBarItems(
   token?: vscode.CancellationToken,
   includeWorkspaceSymbols?: true
 ): Promise<vscode.ProviderResult<vscode.SymbolInformation[]>> {
-  const consumer = async ({ map, env }: utils.IConsumerProps) => {
+  if (includeWorkspaceSymbols) {
+    const documentN = cUtils.normalizePath(document.fileName, projectRoot).toLowerCase()
+    const deps = await utils
+      .consumeScriptModule({
+        document,
+        projectRoot,
+        consumer: p => p.map.sources,
+        getTypeScriptEnvironment: false
+      })
+      .then(deps => deps?.filter(d => d !== documentN))
+
+    if (deps?.every(d => utils.moduleSymbolsRepository.has(d))) {
+      const entrySymbols = (await getNavigationBarItems(document, projectRoot, token)) || []
+      const notEntrySymbols: vscode.SymbolInformation[] = []
+      for (const d of deps) {
+        const repo = utils.moduleSymbolsRepository.get(d)
+        if (repo)
+          repo.map(s =>
+            notEntrySymbols.push(
+              new vscode.SymbolInformation(
+                s.name,
+                s.kind,
+                s.containerName,
+                new vscode.Location(
+                  vscode.Uri.file(s.fileName),
+                  new vscode.Position(s.line, s.character)
+                )
+              )
+            )
+          )
+      }
+      return [...entrySymbols, ...notEntrySymbols]
+    }
+  }
+
+  const consumer = async ({ map, env, bundleContent }: utils.IConsumerProps) => {
     if (!env) return
 
-    const NT = [libUtils.logtime(env.languageService.getNavigationTree, utils.bundle)]
+    const NT = [env.languageService.getNavigationTree(utils.bundle)]
 
     if (NT === undefined || !NT.length || token?.isCancellationRequested) return
 
@@ -642,6 +732,42 @@ async function getNavigationBarItems(
     })
 
     if (token?.isCancellationRequested) return
+
+    if (includeWorkspaceSymbols) {
+      for (const s of sourceSymbols) {
+        if (s.location.uri.fsPath.toLowerCase() === document.fileName.toLowerCase()) continue
+        const dependency = cUtils.normalizePath(s.location.uri.fsPath, projectRoot).toLowerCase()
+        const repo = utils.moduleSymbolsRepository.get(dependency)
+        if (!repo)
+          utils.moduleSymbolsRepository.set(dependency, [
+            {
+              name: s.name,
+              kind: s.kind,
+              containerName: s.containerName,
+              fileName: s.location.uri.fsPath,
+              line: s.location.range.start.line,
+              character: s.location.range.start.character
+            }
+          ])
+        else if (
+          !repo.some(
+            rs =>
+              rs.name === s.name &&
+              rs.fileName === s.location.uri.fsPath &&
+              rs.line === s.location.range.start.line &&
+              rs.character === s.location.range.start.character
+          )
+        )
+          repo.push({
+            name: s.name,
+            kind: s.kind,
+            containerName: s.containerName,
+            fileName: s.location.uri.fsPath,
+            line: s.location.range.start.line,
+            character: s.location.range.start.character
+          })
+      }
+    }
 
     return sourceSymbols
   }

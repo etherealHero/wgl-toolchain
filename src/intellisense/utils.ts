@@ -503,7 +503,11 @@ export async function consumeScriptModule<T>(
 
 export const moduleSymbolsRepository = new Map<
   cUtils.TNormalizedPath,
-  Pick<vscode.SymbolInformation, 'name' | 'kind' | 'containerName'>[]
+  (Pick<vscode.SymbolInformation, 'name' | 'kind' | 'containerName'> & {
+    fileName: string
+    line: number
+    character: number
+  })[]
 >()
 
 export function track<T extends object>(obj: T) {
