@@ -5,14 +5,14 @@
   "version": "0.4.0",
   "publisher": "etherealhero",
   "repository": "https://github.com/etherealHero/wgl-toolchain",
-  "keywords": ["wglscript", "formatter", "linter", "intellisense"],
+  "keywords": ["wglscript", "formatter", "linter", "intellisense", "debugger"],
   "author": "Maxim Gutsan",
   "license": "MIT",
   "icon": "public/logo.jpg",
   "engines": {
     "vscode": "^1.74.0"
   },
-  "categories": ["Programming Languages", "Formatters"],
+  "categories": ["Programming Languages", "Formatters", "Debuggers"],
   "activationEvents": ["onLanguage:javascript"],
   "main": "./out/extension.js",
   "scripts": {
