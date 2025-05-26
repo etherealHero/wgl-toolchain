@@ -63,9 +63,9 @@ export async function getDocumentContent(
 export const astStorage = new Map<TNormalizedPath, { order: number; n: TNode }[]>()
 
 export async function parseScriptModule(file: string, projectRoot: string): Promise<AST<TNode>> {
-  const fileNormalized = normalizePath(file, projectRoot)
-  if (astStorage.has(fileNormalized)) {
-    const astStack = astStorage.get(fileNormalized) as { order: number; n: TNode }[]
+  const nFileLC = normalizePath(file, projectRoot).toLowerCase()
+  if (astStorage.has(nFileLC)) {
+    const astStack = astStorage.get(nFileLC) as { order: number; n: TNode }[]
     return astStack.sort((a, b) => a.order - b.order).map(r => r.n)
   }
 
@@ -76,10 +76,10 @@ export async function parseScriptModule(file: string, projectRoot: string): Prom
     const ast: AST<TNode> = libUtils.logtime(parser.parse, content)
     const astStack: { order: number; n: TNode }[] = []
     for (const i in ast) astStack.push({ order: Number(i), n: ast[Number(i)] })
-    astStorage.set(fileNormalized, astStack)
+    astStorage.set(nFileLC, astStack)
     return ast
   } catch (error) {
-    console.log(`ERROR: ${error} at ${fileNormalized}`)
+    console.log(`ERROR: ${error} at ${nFileLC}`)
     return []
   }
 }
@@ -153,7 +153,8 @@ export async function attachGlobalScript(
   chunks.push(
     new sm.SourceNode(null, null, fileN.toLowerCase(), [
       `/* @@resolved ${globalScriptN} from ${fileN} */\n`,
-      globalScriptSN
+      globalScriptSN,
+      '\n'
     ])
   )
 }

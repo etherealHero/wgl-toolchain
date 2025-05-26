@@ -17,7 +17,7 @@ async function getDefinitionInfoAtPosition(
   token?: vscode.CancellationToken,
   searchPatternForTreeShaking?: string | RegExp
 ): Promise<wgl.SymbolEntry[]> {
-  const consumer = async ({ map, bundlePosition, env, entryAst }: utils.IConsumerProps) => {
+  const consumer = async ({ map, bundlePosition, env, entryAst }: utils.IBundleInfo) => {
     if (token?.isCancellationRequested) return []
 
     const moduleRef = entryAst.find(
@@ -143,7 +143,7 @@ async function getCompletionsAtPosition(
   resolveDependencies: boolean,
   token?: vscode.CancellationToken
 ): Promise<vscode.ProviderResult<vscode.CompletionItem[]>> {
-  const consumer = async ({ bundlePosition, env }: utils.IConsumerProps) => {
+  const consumer = async ({ bundlePosition, env }: utils.IBundleInfo) => {
     if (
       bundlePosition.line == null ||
       bundlePosition.column == null ||
@@ -256,7 +256,7 @@ async function attachGlobalSymbolsIntoCompletions(
 
 function needBundleContextCompletionRequest<T extends Parameters<typeof getCompletionsAtPosition>>(
   props: { document: T[0]; position: T[1] } & Required<
-    Pick<utils.IConsumerProps, 'env' | 'bundlePosition'>
+    Pick<utils.IBundleInfo, 'env' | 'bundlePosition'>
   >
 ) {
   let foundNode: ts.Node | undefined
@@ -338,7 +338,7 @@ async function getCompletionEntryDetails(
   projectRoot: string,
   token?: vscode.CancellationToken
 ): Promise<vscode.ProviderResult<vscode.CompletionItem>> {
-  const consumer = async ({ bundlePosition, env }: utils.IConsumerProps) => {
+  const consumer = async ({ bundlePosition, env }: utils.IBundleInfo) => {
     if (
       bundlePosition.line == null ||
       bundlePosition.column == null ||
@@ -384,7 +384,7 @@ async function getQuickInfoAtPosition(
   projectRoot: string,
   token?: vscode.CancellationToken
 ): Promise<vscode.MarkdownString[]> {
-  const consumer = async ({ bundlePosition, env }: utils.IConsumerProps) => {
+  const consumer = async ({ bundlePosition, env }: utils.IBundleInfo) => {
     if (
       bundlePosition.line == null ||
       bundlePosition.column == null ||
@@ -483,7 +483,7 @@ async function getSignatureHelpItems(
     position,
     projectRoot,
     compileOptions: functionName ? { treeShaking: { searchPattern: functionName } } : undefined,
-    consumer: async ({ bundlePosition, env }: utils.IConsumerProps) => {
+    consumer: async ({ bundlePosition, env }: utils.IBundleInfo) => {
       if (
         bundlePosition.line == null ||
         bundlePosition.column == null ||
@@ -548,7 +548,7 @@ async function getReferencesAtPosition(
   clearVTS?: boolean,
   searchPatternForTreeShaking?: RegExp | string
 ): Promise<wgl.SymbolEntry[]> {
-  const consumer = async ({ bundlePosition, map, env, bundleContent }: utils.IConsumerProps) => {
+  const consumer = async ({ bundlePosition, map, env }: utils.IBundleInfo) => {
     if (
       bundlePosition.line == null ||
       bundlePosition.column == null ||
@@ -661,7 +661,7 @@ async function getNavigationBarItems(
     }
   }
 
-  const consumer = async ({ map, env, bundleContent }: utils.IConsumerProps) => {
+  const consumer = async ({ map, env }: utils.IBundleInfo) => {
     if (!env) return
 
     const NT = [env.languageService.getNavigationTree(utils.bundle)]
@@ -831,7 +831,7 @@ async function getReferencesAtPositionInProject(
       cancellable: true,
       title: 'WGLToolchain'
     },
-    async (p, t) => {
+    async p => {
       p.report({ message: 'Searching module references' })
 
       if (D.source.match('node_modules\\\\@types')) {
@@ -1114,7 +1114,7 @@ async function getDiagnostics(
   document: Pick<vscode.TextDocument, 'fileName'>,
   projectRoot: string
 ): Promise<Map<cUtils.TNormalizedPath, vscode.Diagnostic[]> | undefined> {
-  const consumer = async ({ map, env }: utils.IConsumerProps) => {
+  const consumer = async ({ map, env }: utils.IBundleInfo) => {
     if (!env) return
 
     const documentN = cUtils.normalizePath(document.fileName, projectRoot)
@@ -1225,7 +1225,7 @@ async function getFormattingEditsForDocument(
   endPos: vscode.Position,
   token?: vscode.CancellationToken
 ): Promise<vscode.ProviderResult<vscode.TextEdit[]>> {
-  const consumer = async ({ entryContent }: utils.IConsumerProps) => {
+  const consumer = async ({ entryContent }: utils.IBundleInfo) => {
     let config = await prettier.resolveConfig(path.join(projectRoot, '.prettierrc'))
 
     if (config) config = { ...config, parser: 'typescript' }
@@ -1263,7 +1263,7 @@ async function fixLegacySyntaxAction(
   endPos: vscode.Position,
   token?: vscode.CancellationToken
 ): Promise<vscode.ProviderResult<vscode.TextEdit>> {
-  const consumer = async ({ entryContent }: utils.IConsumerProps) => {
+  const consumer = async ({ entryContent }: utils.IBundleInfo) => {
     let config = await prettier.resolveConfig(path.join(projectRoot, '.prettierrc'))
 
     if (config) config = { ...config, parser: 'typescript' }
@@ -1298,7 +1298,7 @@ async function getFoldingRanges(
   projectRoot: string,
   token?: vscode.CancellationToken
 ): Promise<vscode.ProviderResult<vscode.FoldingRange[]>> {
-  const consumer = async ({ map, env }: utils.IConsumerProps) => {
+  const consumer = async ({ map, env }: utils.IBundleInfo) => {
     if (!env) return
 
     const S = env.languageService.getOutliningSpans(utils.bundle)
@@ -1352,14 +1352,21 @@ async function getFoldingRanges(
   })
 }
 
+type TBundleRecordInfo = [string, sm.Position, sm.SourceMapGenerator | null]
+
 async function getBundle(
   document: Pick<vscode.TextDocument, 'fileName'>,
   projectRoot: string,
   position: Pick<vscode.Position, 'line' | 'character'>
-): Promise<[string, sm.Position]> {
-  const consumer = async ({ bundlePosition, bundleContent, map }: utils.IConsumerProps) => {
+): Promise<TBundleRecordInfo> {
+  const consumer = async ({
+    sourceMapGenerator,
+    bundlePosition,
+    bundleContent,
+    map
+  }: utils.IBundleInfo) => {
     if (bundlePosition.line === null || bundlePosition.column === null)
-      return ['', { line: 1, column: 0 }] as [string, sm.Position]
+      return ['', { line: 1, column: 0 }, null] as TBundleRecordInfo
 
     const { line, column } = map.generatedPositionFor({
       source: path.relative(projectRoot, document.fileName).toLowerCase(),
@@ -1367,16 +1374,21 @@ async function getBundle(
       column: position.character
     })
 
-    return [bundleContent, { line: line || 1, column: column || 0 }] as [string, sm.Position]
+    return [
+      bundleContent,
+      { line: line || 1, column: column || 0 },
+      sourceMapGenerator
+    ] as TBundleRecordInfo
   }
 
   return (
     (await utils.consumeScriptModule({
+      predefinedContent: utils.injectNativeAddonPolyfill(projectRoot),
+      projectRoot,
       document,
       position,
-      projectRoot,
       consumer
-    })) || (['', { line: 1, column: 0 }] as [string, sm.Position])
+    })) || ['', { line: 1, column: 0 }, null]
   )
 }
 
@@ -1416,7 +1428,7 @@ async function getModuleInfo(
   document: Pick<vscode.TextDocument, 'fileName'>,
   projectRoot: string
 ): Promise<vscode.ProviderResult<vscode.MarkdownString>> {
-  const consumer = async ({ map }: utils.IConsumerProps) => {
+  const consumer = async ({ map }: utils.IBundleInfo) => {
     const info = new vscode.MarkdownString('')
     const entry = cUtils.normalizePath(document.fileName, projectRoot)
     const globalDeps = await utils.getGlobalDeps(projectRoot)

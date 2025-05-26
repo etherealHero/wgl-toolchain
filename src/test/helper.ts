@@ -1,9 +1,9 @@
 import * as path from 'path'
 import * as vscode from 'vscode'
 
-import { compile } from '../../compiler/compiler'
-import { astStorage, normalizePath, parse } from '../../compiler/utils'
-import { bundleInfoRepository } from '../../intellisense/utils'
+import { compile } from '../compiler/compiler'
+import { astStorage, normalizePath, parse } from '../compiler/utils'
+import { bundleInfoRepository } from '../intellisense/utils'
 
 export const __dirnameProxy = __dirname.replace(/([\\\/]+)out([\\\/]+)/, '$1src$2')
 
@@ -51,10 +51,10 @@ export const projectRoot = 'c:\\root'
 export function attachFS(fs: Map<string, string>) {
   astStorage.clear()
   for (const [fsPath, content] of fs) {
-    const fileN = normalizePath(fsPath, projectRoot)
+    const fileNLC = normalizePath(fsPath, projectRoot).toLowerCase()
     const ast = parse(content)
     const astStack = []
     for (const i in ast) astStack.push({ order: Number(i), n: ast[Number(i)] })
-    astStorage.set(fileN, astStack)
+    astStorage.set(fileNLC, astStack)
   }
 }

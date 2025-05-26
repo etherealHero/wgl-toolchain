@@ -2,7 +2,7 @@ import * as assert from 'assert'
 import * as path from 'path'
 import * as vscode from 'vscode'
 
-import { restartService } from '../../utils'
+import { restartService } from '../utils'
 import { __dirnameProxy, buildWithTreeShaking, loadExtensionCase } from './helper'
 
 suite('definition context', () => {
@@ -150,7 +150,8 @@ suite('language features', () => {
           r.range.end.line === 5 &&
           r.range.end.character === 10
       ),
-      true
+      true,
+      'AppGlobalScript reference present'
     )
 
     assert.equal(
@@ -162,7 +163,8 @@ suite('language features', () => {
           r.range.end.line === 0 &&
           r.range.end.character === 19
       ),
-      true
+      true,
+      'dep reference present'
     )
 
     assert.equal(
@@ -174,7 +176,8 @@ suite('language features', () => {
           r.range.end.line === 4 &&
           r.range.end.character === 8
       ),
-      true
+      true,
+      'entry reference present'
     )
   })
 
@@ -423,5 +426,34 @@ suite('inspect tools', () => {
 
     assert.equal(!!activeEditor, true, 'document open')
     assert.equal(activeEditor?.document.languageId, 'markdown', 'present Module info')
+  })
+
+  test('should run debug with source-map', async () => {
+    restartService('cleanCache')
+    await loadExtensionCase('entry.js')
+
+    vscode.debug.removeBreakpoints(vscode.debug.breakpoints)
+    vscode.debug.addBreakpoints([
+      new vscode.SourceBreakpoint(
+        new vscode.Location(
+          vscode.Uri.file(path.join(__dirnameProxy, 'entry.js')),
+          new vscode.Position(2, 0)
+        )
+      )
+    ])
+
+    await vscode.commands.executeCommand('workbench.action.debug.start')
+    await new Promise(r => setTimeout(r, 2000)) // wait for attach debugger
+    await vscode.commands.executeCommand('workbench.action.debug.stepInto')
+    await new Promise(r => setTimeout(r, 200))
+
+    const activeEditor = vscode.window.activeTextEditor
+
+    assert.equal(!!activeEditor, true, 'document open')
+    assert.equal(
+      path.basename(activeEditor?.document.fileName || ''),
+      'dep.js',
+      'source-map enabled'
+    )
   })
 })

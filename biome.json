@@ -13,7 +13,7 @@
       "out",
       "src/compiler/parser.js",
       "src/compiler/parser.d.ts",
-      "src/test/intellisense/formatting/**/*.js"
+      "src/test/formatting/**/*.js"
     ]
   },
   "formatter": {

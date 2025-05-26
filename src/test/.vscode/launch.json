@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug WGLScript",
+      "request": "launch",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--enable-source-maps", "--experimental-modules"],
+      /** built-in bundle path on WGLScript toolchain extension */
+      "program": "${workspaceFolder}/.vscode/wgl-toolchain/debug/bundle.js",
+      "sourceMaps": true,
+      "outFiles": ["${workspaceFolder}/.vscode/wgl-toolchain/debug/**/*.js"],
+      "resolveSourceMapLocations": ["${workspaceFolder}/**", "!**/node_modules/**"],
+      "type": "node",
+      "preLaunchTask": {
+        "type": "wglscript",
+        "command": "build"
+      }
+    }
+  ],
+  "compounds": []
+}

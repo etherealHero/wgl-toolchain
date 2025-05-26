@@ -1,7 +1,7 @@
 import * as assert from 'assert'
 
-import type { ImportNode, RegionNode, TNode } from '../../../compiler/compiler'
-import { parse } from '../../../compiler/utils'
+import type { ImportNode, RegionNode, TNode } from '../../compiler/compiler'
+import { parse } from '../../compiler/utils'
 import type { Maybe } from '../helper'
 
 suite('import statements', () => {

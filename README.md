@@ -9,6 +9,7 @@ This extension provides support for the WGLScript programming language.
 	- [x] callExpressionAssignment
 	- [ ] octal literals
 - [x] inspect tools
+	- [x] debug via NodeJS
 	- [x] show bundle
 	- [x] show local bundle
 	- [x] show module info
@@ -33,8 +34,13 @@ This extension provides support for the WGLScript programming language.
 
 	![TypeScript builtin extension](https://raw.githubusercontent.com/etherealHero/wgl-toolchain/refs/heads/main/public/intellisense.gif)
 
-### 📝 Recommendation
+## ⚙ Configuration
 
-- disable builtin TypeScript extension for WGLScript workspace. Both services TypeScript & WGLScript can work improperly
+**Intellisense**. All functions can be turned on/off separately. To reduce the load on the processor, turn off unnecessary features.
 
-	![TypeScript builtin extension](https://raw.githubusercontent.com/etherealHero/wgl-toolchain/refs/heads/main/public/builtin.jpg)
+**Debugging**. [Node.js](https://nodejs.org/en) installation is a prerequisite for debugging WGLScript programs. Configuration _launch.json_ found [here](https://github.com/etherealHero/wgl-toolchain/blob/main/src/test/.vscode/launch.json)
+
+**Recommendation**. Disable builtin TypeScript extension for WGLScript workspace. Both services TypeScript & WGLScript can work improperly
+
+
+![TypeScript builtin extension](https://raw.githubusercontent.com/etherealHero/wgl-toolchain/refs/heads/main/public/builtin.jpg)

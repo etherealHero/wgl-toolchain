@@ -7,8 +7,15 @@ import * as utils from './intellisense/utils'
 
 import { intellisense } from './intellisense/features'
 
-export const getExtOption = <T>(option: string): T =>
-  vscode.workspace.getConfiguration('wglscript').get(option) as T
+export const getExtOption = <T>(option: string): T => {
+  if (option === 'globalScript.path') {
+    const lastUsed = ext.ExtensionContext.globalState.get<string>(LAST_USED_KEY)
+    if (!lastUsed) return vscode.workspace.getConfiguration('wglscript').get(option) as T
+    if (lastUsed === NONE_FILE) return '' as T
+    return lastUsed as T
+  }
+  return vscode.workspace.getConfiguration('wglscript').get(option) as T
+}
 
 export function requestOpenWglScriptWorkspace() {
   vscode.window
@@ -61,6 +68,8 @@ export const restartService = (behaviour?: 'cleanCache' | 'restartExtensionHost'
       compilerUtils.gls.code = ''
       compilerUtils.gls.sourcemap = ''
       compilerUtils.gls.modules = new Map()
+
+      initializeDiagnostics()
     } else if (exceptionBehaviour === 'restartExtensionHost') {
       vscode.commands.executeCommand('workbench.action.restartExtensionHost')
     }
@@ -280,13 +289,14 @@ export function didChangeTextDocumentHandler({
   lastEdit = new Date()
 
   const normalized = compilerUtils.normalizePath(document.uri.fsPath, wsPath)
+  const normalizedLC = normalized.toLowerCase()
 
   if (intellisense.modulesWithError.has(normalized)) {
     intellisense.modulesWithError.delete(normalized)
   }
 
   for (const [entry, info] of utils.bundleInfoRepository) {
-    if (info.map.sources.find(d => d === normalized.toLowerCase())) {
+    if (info.map.sources.find(d => d === normalizedLC)) {
       // exit not implemented in tsvfs
       // if (info.env) info.env.sys.exit(0)
       utils.bundleInfoRepository.delete(entry)
@@ -294,19 +304,18 @@ export function didChangeTextDocumentHandler({
   }
 
   for (const [entry, deps] of intellisense.moduleReferencesStorage)
-    if (deps.find(d => d === normalized.toLowerCase()))
-      intellisense.moduleReferencesStorage.delete(entry)
+    if (deps.find(d => d === normalizedLC)) intellisense.moduleReferencesStorage.delete(entry)
 
-  if (compilerUtils.astStorage.has(normalized)) {
-    compilerUtils.astStorage.delete(normalized)
+  if (compilerUtils.astStorage.has(normalizedLC)) {
+    compilerUtils.astStorage.delete(normalizedLC)
   }
 
-  if (utils.moduleSymbolsRepository.has(normalized.toLowerCase())) {
-    utils.moduleSymbolsRepository.delete(normalized.toLowerCase())
+  if (utils.moduleSymbolsRepository.has(normalizedLC)) {
+    utils.moduleSymbolsRepository.delete(normalizedLC)
   }
 
   if (compilerUtils.gls.code !== '') {
-    if (mapToArray(compilerUtils.gls.modules).indexOf(normalized.toLowerCase()) !== -1) {
+    if (mapToArray(compilerUtils.gls.modules).indexOf(normalizedLC) !== -1) {
       compilerUtils.gls.code = ''
       compilerUtils.gls.sourcemap = ''
       compilerUtils.gls.modules = new Map()
@@ -391,4 +400,190 @@ export function firstNonPatternLeftChar(
   }
 
   return { char: undefined, pos: undefined }
+}
+
+export const buildTask = new vscode.Task(
+  { type: 'wglscript', command: 'build' },
+  vscode.TaskScope.Workspace,
+  'WGLScript build',
+  'wglscript',
+  new vscode.CustomExecution(async () => new utils.WGLBuildTaskTerminal())
+)
+
+export const LAST_USED_KEY = 'lastUsedFilePath'
+export const NONE_FILE = 'NONE_FILE'
+
+export async function promptFileSelectionForGlobalModule(
+  context: vscode.ExtensionContext
+): Promise<string | undefined> {
+  const defaultFromConfig = vscode.workspace
+    .getConfiguration('wglscript')
+    .get<string>('globalScript.path')
+  const lastUsed = context.globalState.get<string>(LAST_USED_KEY)
+  const items: vscode.QuickPickItem[] = []
+
+  items.push({
+    label: `$(history) Последний выбор: ${lastUsed || 'не использовать файл'}`,
+    description: lastUsed,
+    detail: '',
+    alwaysShow: true
+  })
+
+  if (defaultFromConfig) {
+    items.push({
+      label: `$(settings) По умолчанию: ${defaultFromConfig}`,
+      description: defaultFromConfig,
+      detail: '',
+      alwaysShow: true
+    })
+  }
+
+  items.push(
+    {
+      label: '$(close) Не использовать файл',
+      description: '',
+      detail: '',
+      alwaysShow: true
+    },
+    {
+      label: '$(folder) Выбрать файл из проекта...',
+      description: '',
+      detail: '',
+      alwaysShow: true
+    }
+  )
+
+  const selection = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Выберите файл для глобального модуля',
+    ignoreFocusOut: true
+  })
+
+  if (!selection) return undefined
+
+  switch (selection.label) {
+    case '$(close) Не использовать файл':
+      context.globalState.update(LAST_USED_KEY, NONE_FILE)
+      return undefined
+    case '$(folder) Выбрать файл из проекта...': {
+      let filePath = await selectFileFromWorkspace(context)
+      if (filePath) {
+        const wsPath = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(filePath))?.uri.fsPath
+        if (wsPath) {
+          filePath = compilerUtils.normalizePath(filePath, wsPath)
+          context.globalState.update(LAST_USED_KEY, filePath)
+        }
+      }
+      return filePath
+    }
+    default: {
+      const filePath = selection.description
+      if (filePath) {
+        context.globalState.update(LAST_USED_KEY, filePath)
+        return filePath
+      }
+      return undefined
+    }
+  }
+}
+
+export async function selectFileFromWorkspace(
+  context: vscode.ExtensionContext
+): Promise<string | undefined> {
+  const files = await vscode.workspace.findFiles('**/*.{wgl,js}', '**/node_modules/**')
+  const activeDoc = vscode.window.activeTextEditor?.document
+  if (!activeDoc) return
+
+  if (files.length === 0) {
+    vscode.window.showWarningMessage('В workspace нет подходящих файлов.')
+    return undefined
+  }
+
+  const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
+  if (!wsPath) return
+
+  let lastUsed = context.globalState.get<string>(LAST_USED_KEY)
+  if (lastUsed) {
+    lastUsed = path.join(wsPath, lastUsed)
+    files.sort((a, b) => (a.fsPath === lastUsed ? -1 : b.fsPath === lastUsed ? 1 : 0))
+  }
+
+  const items = files.map(file => ({
+    label: `$(file) ${compilerUtils.normalizePath(file.fsPath, wsPath)}`,
+    description: '',
+    detail: '',
+    fileUri: file
+  }))
+
+  const selected = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Начните вводить имя файла...',
+    matchOnDescription: true,
+    matchOnDetail: true,
+    canPickMany: false
+  })
+
+  if (selected) {
+    const path = selected.fileUri.fsPath
+    return path
+  }
+
+  return undefined
+}
+
+export class FileStatusBar {
+  private statusBar: vscode.StatusBarItem
+  private globalState: vscode.Memento
+
+  constructor(context: vscode.ExtensionContext) {
+    this.statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100)
+    this.globalState = context.globalState
+    this.updateStatusBar()
+  }
+
+  private shortenPath(fullPath: string): string {
+    const parts = fullPath.split(path.sep)
+    const shortened = parts.slice(0, -1).map(part => {
+      const words = part.split(/[-_]/).flatMap(word => word.match(/[A-Z][a-z]*|[a-z]+/g) || [])
+      const initials = words.map(word => word[0]).join('')
+      return initials
+    })
+    return [...shortened, parts.at(-1)].join('/')
+  }
+
+  public updateStatusBar(): void {
+    const filePath =
+      this.globalState.get<string>(LAST_USED_KEY) ||
+      vscode.workspace.getConfiguration('wglscript').get('globalScript.path')
+
+    if (!filePath || filePath === NONE_FILE) {
+      this.statusBar.text = '$(notebook-open-as-text) No global'
+      this.statusBar.tooltip = 'Click to select a file'
+    } else {
+      // const shortened = path.basename(filePath)
+      const shortened = this.shortenPath(filePath)
+      this.statusBar.text = `$(notebook-open-as-text) Global: ${shortened}`
+      this.statusBar.tooltip = filePath
+    }
+    this.statusBar.command = 'wglscript.selectGlobalScript'
+    this.statusBar.show()
+  }
+}
+
+export function initializeDiagnostics() {
+  const diagnosticsStrategy = getExtOption<'onchange' | 'onsave' | 'disabled'>(
+    'intellisense.requestStrategy.diagnostics'
+  )
+
+  if (vscode.window.activeTextEditor?.document && diagnosticsStrategy !== 'disabled') {
+    const activeDoc = vscode.window.activeTextEditor?.document
+    const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
+
+    if (wsPath && activeDoc.languageId === 'javascript') {
+      intellisense.getDiagnostics({ fileName: activeDoc.fileName }, wsPath).then(diagnostics => {
+        if (!diagnostics) return
+        ext.diagnosticsCollection.clear()
+        for (const [m, d] of diagnostics)
+          ext.diagnosticsCollection.set(vscode.Uri.file(path.join(wsPath, m)), d)
+      })
+    }
+  }
 }

@@ -9,6 +9,7 @@ import * as cUtils from '../compiler/utils'
 import * as libUtils from '../utils'
 
 import { type AST, type TNode, compile } from '../compiler/compiler'
+import { intellisense } from './features'
 
 /** Bundle file name */
 export const bundle = 'bundle.js'
@@ -324,7 +325,9 @@ export function chunkedArray<T>(arr: Array<T>, chunkSize: number) {
   return result
 }
 
-interface IBundleInfo {
+export interface IBundleInfo {
+  sourceMapGenerator: sm.SourceMapGenerator
+  bundlePosition: sm.NullablePosition
   bundleContent: string
   entryContent: string
   entryAst: AST<TNode>
@@ -334,16 +337,7 @@ interface IBundleInfo {
 
 export const bundleInfoRepository = new Map<cUtils.TNormalizedPath, IBundleInfo>()
 
-export interface IConsumerProps {
-  map: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer
-  bundlePosition: sm.NullablePosition
-  bundleContent: string
-  entryContent: string
-  entryAst: AST<TNode>
-  env?: tsvfs.VirtualTypeScriptEnvironment
-}
-
-type TConsumer<T> = (props: IConsumerProps) => Promise<T> | T
+type TConsumer<T> = (props: IBundleInfo) => Promise<T> | T
 
 interface IConsumeScriptModuleProps<T> {
   document: Pick<vscode.TextDocument, 'fileName'>
@@ -373,6 +367,11 @@ interface IConsumeScriptModuleProps<T> {
    */
   source?: cUtils.TNormalizedPath
 
+  /**
+   * optional inject content before bundle
+   */
+  predefinedContent?: string
+
   compileOptions?: Partial<
     Pick<
       cUtils.CompileOptions,
@@ -393,6 +392,7 @@ export async function consumeScriptModule<T>(
 
   const entry = cUtils.normalizePath(props.document.fileName, props.projectRoot)
   let bundleContent = ''
+  let sourceMapGenerator: sm.SourceMapGenerator
   let entryContent = ''
   let entryAst: AST<TNode> = []
   let map: sm.BasicSourceMapConsumer | sm.IndexedSourceMapConsumer | undefined
@@ -401,12 +401,14 @@ export async function consumeScriptModule<T>(
   const accessCacheBundleInfo = !(
     props.compileOptions?.treeShaking?.searchPattern ||
     props.compileOptions?.skipAttachDependencies ||
-    props.compileOptions?.skipAttachGlobalScript
+    props.compileOptions?.skipAttachGlobalScript ||
+    props.predefinedContent
   )
 
   if (bundleInfoRepository.has(entry) && accessCacheBundleInfo) {
     const bundleInfo = bundleInfoRepository.get(entry) as IBundleInfo
 
+    sourceMapGenerator = bundleInfo.sourceMapGenerator
     bundleContent = bundleInfo.bundleContent
     map = bundleInfo.map
     entryContent = bundleInfo.entryContent
@@ -418,7 +420,15 @@ export async function consumeScriptModule<T>(
       props.compileOptions
     )
 
-    const sn = await compile(props.document.fileName, compilerOpts)
+    let sn = await compile(props.document.fileName, compilerOpts)
+
+    sn = new sm.SourceNode(null, null, null, [
+      `/**
+ * Generated WGLScript bundle
+ * Do not edit file
+ */\n${props.predefinedContent || ''}\n`,
+      sn
+    ])
 
     if (isCancelled(props.token)) return
 
@@ -432,6 +442,7 @@ export async function consumeScriptModule<T>(
 
     if (isCancelled(props.token)) return
 
+    sourceMapGenerator = codeWithSourceMap.map
     bundleContent = codeWithSourceMap.code
     entryContent = snEntry.toStringWithSourceMap({ file: entry }).code
     map = await sm.SourceMapConsumer.fromSourceMap(codeWithSourceMap.map)
@@ -483,6 +494,8 @@ export async function consumeScriptModule<T>(
 
     if (isNeedCacheBundleInfo) {
       bundleInfoRepository.set(entry, {
+        sourceMapGenerator,
+        bundlePosition,
         bundleContent,
         entryContent,
         entryAst,
@@ -492,8 +505,8 @@ export async function consumeScriptModule<T>(
     }
   }
 
-  const consumerProps = { bundlePosition, bundleContent, entryContent, entryAst, map, env }
-  const resolve = await props.consumer(consumerProps)
+  const p = { bundlePosition, bundleContent, sourceMapGenerator, entryContent, entryAst, map, env }
+  const resolve = await props.consumer(p)
 
   if (!isNeedCacheBundleInfo) env = undefined
   if (isCancelled(props.token)) return
@@ -562,4 +575,70 @@ export async function getGlobalDeps(projectRoot: string) {
     })) || []
 
   return globalDeps
+}
+
+export class WGLBuildTaskTerminal implements vscode.Pseudoterminal {
+  private writeEmitter = new vscode.EventEmitter<string>()
+  onDidWrite: vscode.Event<string> = this.writeEmitter.event
+  private closeEmitter = new vscode.EventEmitter<number>()
+  onDidClose?: vscode.Event<number> = this.closeEmitter.event
+  async open(): Promise<void> {
+    const activeTE = vscode.window.activeTextEditor
+
+    if (!activeTE || activeTE.document.languageId !== 'javascript') {
+      this.writeEmitter.fire('Failed: you should open WGLScript document\r\n')
+      this.closeEmitter.fire(1)
+      return
+    }
+
+    const wsPath = vscode.workspace.getWorkspaceFolder(activeTE.document.uri)?.uri.fsPath
+
+    if (!wsPath) {
+      this.writeEmitter.fire(
+        'Failed: you should open WGLScript project in VS Code explorer via Workspace Folder\r\n'
+      )
+      this.closeEmitter.fire(1)
+      return
+    }
+
+    const [bundle, _, smGen] = await intellisense.getBundle(
+      activeTE.document,
+      wsPath,
+      activeTE.selection.active
+    )
+
+    if (!smGen) {
+      this.writeEmitter.fire('Failed generate source map. Exit 1\r\n')
+      this.closeEmitter.fire(1)
+      return
+    }
+
+    const sourceMap = smGen?.toJSON()
+    sourceMap.sourceRoot = '../../../' // root access
+
+    const debugDir = path.join(wsPath, '.vscode', 'wgl-toolchain', 'debug')
+    if (!fs.existsSync(debugDir)) {
+      fs.mkdirSync(debugDir, { recursive: true })
+    }
+
+    const bundleContent = `${bundle}\n//# sourceMappingURL=bundle.js.map`
+
+    fs.writeFileSync(path.join(debugDir, 'bundle.js'), bundleContent, { flag: 'w' })
+    fs.writeFileSync(path.join(debugDir, 'bundle.js.map'), JSON.stringify(sourceMap), { flag: 'w' })
+
+    this.writeEmitter.fire('Success\r\n')
+    this.closeEmitter.fire(0)
+
+    vscode.commands.executeCommand('workbench.debug.action.toggleRepl')
+  }
+  close(): void {}
+}
+
+export function injectNativeAddonPolyfill(projectRoot: string) {
+  const addon = libUtils.getExtOption<string>('nativeAddon.path')
+  if (addon && fs.existsSync(path.join(projectRoot, addon))) {
+    return `const ___$NativeAddon = require('${path.join(projectRoot, addon).replace(/\\/g, '/').slice(0, -5)}')
+Object.assign(global, ___$NativeAddon)
+Object.assign(global, ___$NativeAddon.Consts)`
+  }
 }

@@ -2,7 +2,7 @@
   "name": "wgl-toolchain",
   "displayName": "WGLScript toolchain",
   "description": "WGLScript formatter, linter, intellisense for VS Code",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "publisher": "etherealhero",
   "repository": "https://github.com/etherealHero/wgl-toolchain",
   "keywords": ["wglscript", "formatter", "linter", "intellisense"],
@@ -215,6 +215,12 @@
           "scope": "resource",
           "default": "Lib/AppGlobalScript.js",
           "markdownDescription": "Global script module of wglscript project"
+        },
+        "wglscript.nativeAddon.path": {
+          "type": "string",
+          "scope": "resource",
+          "default": "",
+          "markdownDescription": "Path to the **native Node.js addon** (`.node` file) that provides built-in WGLScript APIs (I/O, networking etc.). If not set, default addon from the extension will be used."
         }
       }
     },
@@ -234,6 +240,24 @@
       {
         "command": "wglscript.showModuleInfo",
         "title": "WGL Toolchain: Show Module Info"
+      },
+      {
+        "command": "wglscript.selectGlobalScript",
+        "title": "WGL Toolchain: select global script file"
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "wglscript",
+        "required": ["command"],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": ["build"],
+            "markdownEnumDescriptions": ["Build WGLScript bundle."],
+            "enumItemLabels": ["Build"]
+          }
+        }
       }
     ]
   },

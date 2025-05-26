@@ -1,5 +1,11 @@
 # Change Log
 
+## 0.4.0 (2025-05-26)
+
+- add debugger via NodeJS with sourceMaps & pre-launch build task
+- fix EOF of globalScirpt
+- fix update dependencies with case sensetive import path
+
 ## 0.3.3 (2025-05-13)
 
 - fix completion entry details on dirty document

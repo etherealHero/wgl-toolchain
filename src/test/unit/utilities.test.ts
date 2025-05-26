@@ -1,6 +1,6 @@
 import * as assert from 'assert'
 import * as vscode from 'vscode'
-import { firstNonPatternLeftChar } from '../../../utils'
+import { firstNonPatternLeftChar } from '../../utils'
 
 suite('get first non pattern left char', () => {
   test('finds last non-whitespace in same line', async () => {

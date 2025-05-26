@@ -2,6 +2,7 @@
   "editor.defaultFormatter": "etherealhero.wgl-toolchain",
 
   "wglscript.globalScript.path": "Lib/AppGlobalScript.js",
+  "wglscript.nativeAddon.path": ".vscode/wgl-toolchain/addon/lib.node",
   "wglscript.intellisense.typescriptThreads": 20,
   "wglscript.intellisense.buildThreads": 250,
   "wglscript.intellisense.exceptionBehaviour": "restartExtensionHost",

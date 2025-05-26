@@ -8,10 +8,30 @@ import { getDocumentContent } from './compiler/utils'
 import { intellisense } from './intellisense/features'
 
 export let diagnosticsCollection: vscode.DiagnosticCollection
+export let ExtensionContext: vscode.ExtensionContext
 
 // TODO: активация только на WGLProject
 export function activate(context: vscode.ExtensionContext) {
   console.log('Extension "wgl-toolchain" is now active')
+
+  ExtensionContext = context
+  const fileStatusBar = new utils.FileStatusBar(context)
+  fileStatusBar.updateStatusBar()
+
+  context.subscriptions.push(
+    vscode.tasks.registerTaskProvider('wglscript', {
+      provideTasks: () => [utils.buildTask],
+      resolveTask: task => task
+    })
+  )
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('wglscript.selectGlobalScript', async () => {
+      await utils.promptFileSelectionForGlobalModule(context)
+      fileStatusBar.updateStatusBar()
+      utils.restartService('cleanCache')
+    })
+  )
 
   /**
    * если при активации расширения был открыт документ,
@@ -63,24 +83,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // уходит в рекурсию на старте
     // utils.restartService()
-
-    const diagnosticsStrategy = utils.getExtOption<'onchange' | 'onsave' | 'disabled'>(
-      'intellisense.requestStrategy.diagnostics'
-    )
-
-    if (vscode.window.activeTextEditor?.document && diagnosticsStrategy !== 'disabled') {
-      const activeDoc = vscode.window.activeTextEditor?.document
-      const wsPath = vscode.workspace.getWorkspaceFolder(activeDoc.uri)?.uri.fsPath
-
-      if (wsPath && activeDoc.languageId === 'javascript') {
-        intellisense.getDiagnostics({ fileName: activeDoc.fileName }, wsPath).then(diagnostics => {
-          if (!diagnostics) return
-          diagnosticsCollection.clear()
-          for (const [m, d] of diagnostics)
-            diagnosticsCollection.set(vscode.Uri.file(path.join(wsPath, m)), d)
-        })
-      }
-    }
+    utils.initializeDiagnostics()
 
     context.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor(async e => {

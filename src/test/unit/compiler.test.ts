@@ -1,6 +1,6 @@
 import * as assert from 'assert'
 
-import { compile } from '../../../compiler/compiler'
+import { compile } from '../../compiler/compiler'
 import { attachFS, projectRoot } from '../helper'
 
 suite('module resolver', () => {
