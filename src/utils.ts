@@ -419,11 +419,11 @@ export async function promptFileSelectionForGlobalModule(
   const defaultFromConfig = vscode.workspace
     .getConfiguration('wglscript')
     .get<string>('globalScript.path')
-  const lastUsed = context.globalState.get<string>(LAST_USED_KEY)
+  const lastUsed = context.globalState.get<string>(LAST_USED_KEY) || NONE_FILE
   const items: vscode.QuickPickItem[] = []
 
   items.push({
-    label: `$(history) Последний выбор: ${lastUsed || 'не использовать файл'}`,
+    label: `$(history) Последний выбор: ${lastUsed === NONE_FILE ? 'не использовать файл' : lastUsed}`,
     description: lastUsed,
     detail: '',
     alwaysShow: true
