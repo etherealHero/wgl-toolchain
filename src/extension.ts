@@ -1,3 +1,4 @@
+import * as fs from 'fs'
 import * as path from 'path'
 import type * as ts from 'typescript'
 import * as vscode from 'vscode'
@@ -11,27 +12,9 @@ export let diagnosticsCollection: vscode.DiagnosticCollection
 export let ExtensionContext: vscode.ExtensionContext
 
 // TODO: активация только на WGLProject
-export function activate(context: vscode.ExtensionContext) {
-  console.log('Extension "wgl-toolchain" is now active')
-
-  ExtensionContext = context
-  const fileStatusBar = new utils.FileStatusBar(context)
-  fileStatusBar.updateStatusBar()
-
-  context.subscriptions.push(
-    vscode.tasks.registerTaskProvider('wglscript', {
-      provideTasks: () => [utils.buildTask],
-      resolveTask: task => task
-    })
-  )
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('wglscript.selectGlobalScript', async () => {
-      await utils.promptFileSelectionForGlobalModule(context)
-      fileStatusBar.updateStatusBar()
-      utils.restartService('cleanCache')
-    })
-  )
+export async function activate(context: vscode.ExtensionContext) {
+  const logger = (msg: string) =>
+    fs.appendFileSync(path.join(context.logUri.fsPath), `${new Date().toISOString()}: ${msg}\n`)
 
   /**
    * если при активации расширения был открыт документ,
@@ -44,10 +27,41 @@ export function activate(context: vscode.ExtensionContext) {
     version: vscode.window.activeTextEditor?.document.version
   }
 
-  const wsf = vscode.workspace.workspaceFolders
-  if (wsf === undefined) {
+  const wsPath = vscode.workspace.workspaceFolders?.at(0)?.uri.fsPath
+  if (wsPath === undefined) {
     utils.requestOpenWglScriptWorkspace()
   } else {
+    const isDependenciesExists = () => {
+      const wgldts = fs.existsSync(
+        path.join(wsPath, 'node_modules', '@types', 'wglscript', 'lib.wglscript.d.ts')
+      )
+      const ES5Compatibility = fs.existsSync(
+        path.join(wsPath, 'node_modules', '@types', 'wglscript', 'lib.es5.d.ts')
+      )
+
+      if (!wgldts || !ES5Compatibility) return false
+      return true
+    }
+
+    if (!isDependenciesExists()) {
+      logger('Package @types/wglscript not found at node_modules.')
+      const action = await vscode.window.showErrorMessage(
+        'Package @types/wglscript not found at node_modules. Try `npm i` or `npm update` commands.',
+        'Run npm install'
+      )
+
+      if (action === 'Run npm install') {
+        const terminal = vscode.window.createTerminal()
+        terminal.show()
+        terminal.sendText('npm i && npm update')
+
+        const isInstalled = await utils.waitForDependencies(isDependenciesExists)
+        if (!isInstalled) return
+      } else {
+        return
+      }
+    }
+
     let command: vscode.Disposable
 
     command = vscode.commands.registerCommand('wglscript.restartService', utils.restartService)
@@ -80,13 +94,16 @@ export function activate(context: vscode.ExtensionContext) {
     statusBar.show()
 
     context.subscriptions.push(statusBar)
+    logger('[info] wgl label registered')
 
     // уходит в рекурсию на старте
     // utils.restartService()
     utils.initializeDiagnostics()
+    logger('[info] diagnostics initialized')
 
     context.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor(async e => {
+        logger('[info] onDidChangeActiveTextEditor handle triggered')
         const diagnosticsStrategy = utils.getExtOption<'onchange' | 'onsave' | 'disabled'>(
           'intellisense.requestStrategy.diagnostics'
         )
@@ -102,6 +119,8 @@ export function activate(context: vscode.ExtensionContext) {
         await new Promise(r => setTimeout(r, 1000))
         if (vscode.window.activeTextEditor?.document.version !== e.document.version) return
 
+        logger('[info] onDidChangeActiveTextEditor calculate diagnostics...')
+
         const diagnostics = await intellisense.getDiagnostics(
           { fileName: activeDoc.fileName },
           wsPath
@@ -113,11 +132,15 @@ export function activate(context: vscode.ExtensionContext) {
         diagnosticsCollection.clear()
         for (const [m, d] of diagnostics)
           diagnosticsCollection.set(vscode.Uri.file(path.join(wsPath, m)), d)
+
+        logger('[info] onDidChangeActiveTextEditor diagnostics calculated')
+        logger('[info] onDidChangeActiveTextEditor pass')
       })
     )
 
     context.subscriptions.push(
       vscode.workspace.onDidSaveTextDocument(e => {
+        logger('[info] onDidSaveTextDocument triggered')
         if (e.languageId !== 'javascript') return
 
         const diagnosticsStrategy = utils.getExtOption<'onchange' | 'onsave' | 'disabled'>(
@@ -149,13 +172,9 @@ export function activate(context: vscode.ExtensionContext) {
             }
           }
         }
-      })
-    )
 
-    context.subscriptions.push(
-      vscode.workspace.onDidChangeTextDocument(e =>
-        utils.didChangeTextDocumentHandler({ document: e.document })
-      )
+        logger('[info] onDidSaveTextDocument pass')
+      })
     )
   }
 
@@ -165,6 +184,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.languages.registerDefinitionProvider(['javascript'], {
         provideDefinition: async (document, position, token) => {
+          logger('[info] trigger provideDefinition')
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
           if (wsPath === undefined) return
@@ -188,10 +208,12 @@ export function activate(context: vscode.ExtensionContext) {
               pattern
             )
           } catch (error) {
-            console.log(`ERROR: ${error}`)
+            logger(`[error] request getDefinitionInfoAtPosition ${error}`)
             utils.restartService()
             return
           }
+
+          logger('[info] pass provideDefinition')
 
           return di.map(d => ({
             uri: vscode.Uri.file(utils.getRealCasePath(wsPath, d.source)),
@@ -210,6 +232,7 @@ export function activate(context: vscode.ExtensionContext) {
         ['javascript'],
         {
           provideCompletionItems: async (document, position, token) => {
+            logger('[info] trigger provideCompletionItems')
             const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
             if (wsPath === undefined) return
@@ -232,13 +255,16 @@ export function activate(context: vscode.ExtensionContext) {
                 token
               )
 
+              logger('[info] pass provideCompletionItems')
+
               return completions
             } catch (error) {
-              console.log(`ERROR: ${error}`)
+              logger(`[error] request getCompletionsAtPosition ${error}`)
               utils.restartService()
             }
           },
           resolveCompletionItem: async (item, token) => {
+            logger('[info] trigger resolveCompletionItem')
             if (!vscode.window.activeTextEditor) return
 
             const document = vscode.window.activeTextEditor.document
@@ -258,7 +284,7 @@ export function activate(context: vscode.ExtensionContext) {
 
               return completion
             } catch (error) {
-              console.log(`ERROR: ${error}`)
+              logger(`[error] request getCompletionEntryDetails ${error}`)
               utils.restartService()
             }
           }
@@ -272,6 +298,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.languages.registerHoverProvider(['javascript'], {
         provideHover: async (document, position, token) => {
+          logger('[info] trigger provideHover')
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
           if (wsPath === undefined) return
@@ -284,9 +311,11 @@ export function activate(context: vscode.ExtensionContext) {
               token
             )
 
+            logger('[info] pass provideHover')
+
             return { contents: quickInfo }
           } catch (error) {
-            console.log(`ERROR: ${error}`)
+            logger(`[error] request getQuickInfoAtPosition ${error}`)
             utils.restartService()
           }
         }
@@ -303,6 +332,7 @@ export function activate(context: vscode.ExtensionContext) {
         ['javascript'],
         {
           provideSignatureHelp: async (document, position, token, _context) => {
+            logger('[info] trigger provideSignatureHelp')
             const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
             if (wsPath === undefined) return
@@ -315,9 +345,11 @@ export function activate(context: vscode.ExtensionContext) {
                 token
               )
 
+              logger('[info] pass provideSignatureHelp')
+
               return signatureHelpItems
             } catch (error) {
-              console.log(`ERROR: ${error}`)
+              logger(`[error] request getSignatureHelpItems ${error}`)
               utils.restartService()
             }
           }
@@ -334,6 +366,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.languages.registerReferenceProvider(['javascript'], {
         provideReferences: async (document, position, context, token) => {
+          logger('[info] trigger provideReferences')
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
           if (wsPath === undefined) return
@@ -355,12 +388,14 @@ export function activate(context: vscode.ExtensionContext) {
               new RegExp(`[^a-zA-Z0-9$_]${word}[^a-zA-Z0-9$_]`, 'm')
             )
 
+            logger('[info] pass provideReferences')
+
             return refs.map(d => ({
               uri: vscode.Uri.file(utils.getRealCasePath(wsPath, d.source)),
               range: new vscode.Range(d.line, d.column, d.line, d.column + d.length)
             }))
           } catch (error) {
-            console.log(`ERROR: ${error}`)
+            logger(`[error] request getReferencesAtPositionInProject ${error}`)
             utils.restartService()
             return
           }
@@ -375,6 +410,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.languages.registerRenameProvider(['javascript'], {
         provideRenameEdits: async (document, position, newName, token) => {
+          logger('[info] trigger provideRenameEdits')
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
           if (wsPath === undefined) return
@@ -424,14 +460,17 @@ export function activate(context: vscode.ExtensionContext) {
               docsSync.map(d => utils.didChangeTextDocumentHandler({ document: d, force: true }))
             )
 
+            logger('[info] pass provideRenameEdits')
+
             return wsEdit
           } catch (error) {
-            console.log(`ERROR: ${error}`)
+            logger(`[error] request getReferencesAtPositionInProject ${error}`)
             utils.restartService()
             return
           }
         },
         prepareRename: async (document, position, token) => {
+          logger('[info] trigger prepareRename')
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
           if (wsPath === undefined) return
@@ -454,7 +493,7 @@ export function activate(context: vscode.ExtensionContext) {
               new RegExp(`[^a-zA-Z0-9$_]${word}[^a-zA-Z0-9$_]`, 'm')
             )
           } catch (error) {
-            console.log(`ERROR: ${error}`)
+            logger(`[error] request getDefinitionInfoAtPosition ${error}`)
             utils.restartService()
           }
 
@@ -474,20 +513,25 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.languages.registerDocumentSymbolProvider(['javascript'], {
         provideDocumentSymbols: async (document, token) => {
+          logger('[info] trigger provideDocumentSymbols')
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
           if (wsPath === undefined) return
 
           try {
             if (await utils.debaunceChangeTextDocument(utils.lastEdit)) {
-              return await intellisense.getNavigationBarItems(
+              const res = await intellisense.getNavigationBarItems(
                 { fileName: document.fileName },
                 wsPath,
                 token
               )
+
+              logger('[info] pass provideDocumentSymbols')
+
+              return res
             }
           } catch (error) {
-            console.log(`ERROR: ${error}`)
+            logger(`[error] request getNavigationBarItems ${error}`)
             utils.restartService()
           }
         }
@@ -502,6 +546,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.languages.registerWorkspaceSymbolProvider({
         provideWorkspaceSymbols: async (_query, token) => {
+          logger('[info] trigger provideWorkspaceSymbols')
           const editor = vscode.window.activeTextEditor
           if (!editor) {
             return [
@@ -550,9 +595,11 @@ export function activate(context: vscode.ExtensionContext) {
               )
             }
 
+            logger('[info] pass provideWorkspaceSymbols')
+
             return symbols
           } catch (error) {
-            console.log(`ERROR: ${error}`)
+            logger(`[error] request getNavigationBarItems ${error}`)
             utils.restartService()
           }
         }
@@ -564,6 +611,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.languages.registerDocumentFormattingEditProvider('javascript', {
         provideDocumentFormattingEdits: async (document, options, token) => {
+          logger('[info] trigger provideDocumentFormattingEdits')
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
           if (wsPath === undefined) return
@@ -571,9 +619,16 @@ export function activate(context: vscode.ExtensionContext) {
           const endPos = document.positionAt(document.getText().length - 1)
 
           try {
-            return await intellisense.getFormattingEditsForDocument(document, wsPath, endPos, token)
+            const res = await intellisense.getFormattingEditsForDocument(
+              document,
+              wsPath,
+              endPos,
+              token
+            )
+            logger('[info] trigger provideDocumentFormattingEdits')
+            return res
           } catch (error) {
-            console.log(`ERROR: ${error}`)
+            logger(`[error] request getFormattingEditsForDocument ${error}`)
             vscode.window.showErrorMessage(`WGLFormatter ${error}`)
             utils.restartService()
           }
@@ -588,20 +643,23 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.languages.registerFoldingRangeProvider(['javascript'], {
         provideFoldingRanges: async (document, context, token) => {
+          logger('[info] trigger provideFoldingRanges')
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
           if (wsPath === undefined) return
 
           try {
             if (await utils.debaunceChangeTextDocument(utils.lastEdit)) {
-              return await intellisense.getFoldingRanges(
+              const res = await intellisense.getFoldingRanges(
                 { fileName: document.fileName },
                 wsPath,
                 token
               )
+              logger('[info] pass provideFoldingRanges')
+              return res
             }
           } catch (error) {
-            console.log(`ERROR: ${error}`)
+            logger(`[error] request getFoldingRanges ${error}`)
             utils.restartService()
           }
         }
@@ -616,6 +674,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.registerCommand(
         'wglscript.wglToEsRefactor',
         async (document: vscode.TextDocument) => {
+          logger('[info] trigger wglToEsRefactor')
           const editor = vscode.window.activeTextEditor
           const projectRoot = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
           if (!editor || editor.document.uri !== document.uri || !projectRoot) return
@@ -633,13 +692,17 @@ export function activate(context: vscode.ExtensionContext) {
               wsEdit.replace(document.uri, edit.range, edit.newText)
               await vscode.workspace.applyEdit(wsEdit)
             }
+
+            logger('[info] pass wglToEsRefactor')
           } catch (error) {
+            logger(`[error] request fixLegacySyntaxAction ${error}`)
             vscode.window.showErrorMessage(`Refactor failed: ${error}`)
           }
         }
       ),
       vscode.languages.registerCodeActionsProvider(['javascript'], {
         provideCodeActions: async (document, range, context, token) => {
+          logger('[info] trigger provideCodeActions')
           const wsPath = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath
 
           if (wsPath === undefined) return
@@ -656,7 +719,7 @@ export function activate(context: vscode.ExtensionContext) {
 
             return [action]
           } catch (error) {
-            console.log(`ERROR: ${error}`)
+            logger(`[error] request registerCodeActionsProvider ${error}`)
             vscode.window.showErrorMessage(`ERROR ${error}`)
             // utils.restartService()
           }
@@ -664,6 +727,43 @@ export function activate(context: vscode.ExtensionContext) {
       })
     )
   }
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument(e => {
+      if (e.document.languageId !== 'javascript') return
+      logger(`[info] onDidChangeTextDocument triggered ${e.document.fileName}`)
+      utils.didChangeTextDocumentHandler({ document: e.document })
+      logger(`[info] onDidChangeTextDocument pass ${e.document.fileName}`)
+    })
+  )
+
+  const outputChannel = vscode.window.createOutputChannel('WGLScript Toolchain')
+  context.subscriptions.push(outputChannel)
+  outputChannel.appendLine(`log uri ${context.logUri.fsPath}`)
+  logger('[info] extension activated')
+
+  ExtensionContext = context
+  const fileStatusBar = new utils.FileStatusBar(context)
+  logger('[info] status bar initialized')
+  fileStatusBar.updateStatusBar()
+  logger('[info] status bar updated')
+
+  context.subscriptions.push(
+    vscode.tasks.registerTaskProvider('wglscript', {
+      provideTasks: () => [utils.buildTask],
+      resolveTask: task => task
+    })
+  )
+  logger('[info] build task registered')
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('wglscript.selectGlobalScript', async () => {
+      await utils.promptFileSelectionForGlobalModule(context)
+      fileStatusBar.updateStatusBar()
+      utils.restartService('cleanCache')
+    })
+  )
+  logger('[info] selectGlobalScript command registered')
 
   diagnosticsCollection = vscode.languages.createDiagnosticCollection('wglscript')
   context.subscriptions.push(diagnosticsCollection)

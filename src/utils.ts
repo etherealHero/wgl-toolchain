@@ -587,3 +587,24 @@ export function initializeDiagnostics() {
     }
   }
 }
+
+export function waitForDependencies(
+  isDependenciesExists: () => boolean,
+  timeoutMs = 120000
+): Promise<boolean> {
+  const checkInterval = 5000 // Проверка каждые 5 секунд
+  let elapsed = 0
+
+  return new Promise(resolve => {
+    const interval = setInterval(() => {
+      if (isDependenciesExists()) {
+        clearInterval(interval)
+        resolve(true)
+      } else if (elapsed >= timeoutMs) {
+        clearInterval(interval)
+        resolve(false)
+      }
+      elapsed += checkInterval
+    }, checkInterval)
+  })
+}

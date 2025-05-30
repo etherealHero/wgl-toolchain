@@ -1,5 +1,10 @@
 # Change Log
 
+## 0.4.1 (2025-05-30)
+
+- fix ininity loop on missing dependency
+- add extension logger
+
 ## 0.4.0 (2025-05-26)
 
 - add debugger via NodeJS with sourceMaps & pre-launch build task
